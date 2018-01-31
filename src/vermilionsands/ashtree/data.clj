@@ -34,7 +34,8 @@
     (catch Exception e
       (throw (IllegalStateException. "Invalid reference state!" e)))))
 
-(defn- notify [ignite-atom old-val new-val]
+(defn- notify
+  [ignite-atom old-val new-val]
   (let [messaging (.-messaging ignite-atom)
         {:keys [notification-topic notification-timeout]} (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]
     (if notification-topic
@@ -128,8 +129,8 @@
 
   DistributedAtom
   (set-shared-validator! [this f]
-    (validate f (deref this))
     (loop []
+      (validate f (deref this))
       (let [old (.get shared-ctx)
             new (assoc (.get shared-ctx) :validator f)
             ok? (.compareAndSet shared-ctx old new)]
