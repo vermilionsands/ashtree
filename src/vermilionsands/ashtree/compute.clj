@@ -1,4 +1,5 @@
 (ns vermilionsands.ashtree.compute
+  (:require [clojure.core.memoize :as memoize])
   (:import [org.apache.ignite.lang IgniteCallable]
            [org.apache.ignite IgniteCompute]
            [java.util Collection])
@@ -9,10 +10,13 @@
   (call [_]
     (apply f args)))
 
+;; maybe make this configurable
+(def ^:private caching-eval (memoize/lru eval :lru/threshold 100))
+
 (deftype EvalIgniteCallableWrapper [f args]
   IgniteCallable
   (call [_]
-    (let [g (eval f)]
+    (let [g (caching-eval f)]
       (apply g args))))
 
 (defn apply-fn
