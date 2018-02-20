@@ -19,10 +19,15 @@
     (let [f (caching-eval fn-form)]
       (apply f args))))
 
-(defn ignite-callable [f & args]
+(defn ignite-callable [f args]
   (cond
-    (list? f) (->EvalIgniteCallableWrapper f args)
-    :else     (->IgniteCallableWrapper f args)))
+    (-> f meta :vermilionsands.ashtree.function/form)
+    (->EvalIgniteCallableWrapper (-> f meta :vermilionsands.ashtree.function/form) args)
+
+    (list? f)
+    (->EvalIgniteCallableWrapper f args)
+
+    :else (->IgniteCallableWrapper f args)))
 
 (defn apply-fn
   [^IgniteCompute compute f & args]
