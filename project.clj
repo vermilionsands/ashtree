@@ -5,5 +5,6 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [org.apache.ignite/ignite-core "2.3.0"]]
-  :profiles {:dev {:source-paths ["dev"]}
+  :profiles {:dev {:source-paths ["dev"]
+                   :aot [functions vermilionsands.ashtree.compute]}
              :test {:aot [vermilionsands.ashtree.test-helpers]}})

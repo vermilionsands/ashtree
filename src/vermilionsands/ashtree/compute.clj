@@ -1,7 +1,8 @@
 (ns vermilionsands.ashtree.compute
   (:import [org.apache.ignite.lang IgniteCallable]
            [org.apache.ignite IgniteCompute]
-           [java.util Collection]))
+           [java.util Collection])
+  (:gen-class))
 
 (deftype IgniteCallableWrapper [f args]
   IgniteCallable
