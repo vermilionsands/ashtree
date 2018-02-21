@@ -1,5 +1,6 @@
 (ns vermilionsands.ashtree.compute
-  (:require [clojure.core.memoize :as memoize])
+  (:require [clojure.core.memoize :as memoize]
+            [vermilionsands.ashtree.function :as function])
   (:import [org.apache.ignite.lang IgniteCallable]
            [org.apache.ignite IgniteCompute]
            [java.util Collection])
@@ -21,8 +22,8 @@
 
 (defn ignite-callable [f args]
   (cond
-    (-> f meta :vermilionsands.ashtree.function/form)
-    (->EvalIgniteCallableWrapper (-> f meta :vermilionsands.ashtree.function/form) args)
+    (= (type f) ::function/serializable-fn)
+    (->EvalIgniteCallableWrapper (function/eval-form f) args)
 
     (list? f)
     (->EvalIgniteCallableWrapper f args)

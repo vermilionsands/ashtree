@@ -1,7 +1,8 @@
 (ns user
   (:require [functions :refer :all]
             [vermilionsands.ashtree.compute :as compute]
-            [vermilionsands.ashtree.data :as data])
+            [vermilionsands.ashtree.data :as data]
+            [vermilionsands.ashtree.function :as f])
   (:import [org.apache.ignite Ignition Ignite IgniteCompute]
            [org.apache.ignite.cache CacheMode]
            [org.apache.ignite.configuration IgniteConfiguration AtomicConfiguration]

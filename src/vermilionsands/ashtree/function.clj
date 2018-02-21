@@ -1,6 +1,10 @@
 (ns vermilionsands.ashtree.function
   (:import [clojure.lang Compiler$LocalBinding]))
 
+;; todo
+;; parts of this logic seem to be useless in this usecase
+;; maybe replace with the original serializable-fn or the one used in flambo?
+
 (defn- generate-name [namespace line column fn-name]
   (let [ns-string (name namespace)]
     (if fn-name
@@ -15,7 +19,7 @@
        (filter symbol?)
        (set)))
 
-;; todo consider replacing java objects (for example arrays etc) serializable/deserializable
+;; todo consider replacing java objects (for example arrays etc)
 ;; with some more friendly
 (defn- bindings [local-bindings used-symbols-set]
   (->>
@@ -43,7 +47,8 @@
         local-bindings (bindings (vals &env) (used-symbols (rest body)))]
     `(with-meta
        (fn ~@body)
-       {::name     '~fn-name
+       {:type ::serializable-fn
+        ::name     '~fn-name
         ::form     '~form
         ::bindings ~local-bindings})))
 
@@ -54,3 +59,8 @@
         x (with-meta x {::name name})]
     `(def ~name
        (sfn ~x ~@xs))))
+
+(defn eval-form [f]
+  (let [form (cons 'fn (rest (-> f meta ::form)))
+        bindings (-> f meta ::bindings)]
+    `(~'let [~@bindings] ~form)))
