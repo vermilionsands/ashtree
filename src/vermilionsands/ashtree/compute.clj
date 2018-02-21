@@ -30,14 +30,18 @@
 
     :else (->IgniteCallableWrapper f args)))
 
-(defn apply-fn
+(defn call
   [^IgniteCompute compute f & args]
   (.call compute ^IgniteCallable (ignite-callable f args)))
 
-(defn apply-fns
+(defn call-for
+  [^IgniteCompute compute f & args-seqs]
+  (.call compute ^Collection (mapv #(ignite-callable f %) args-seqs)))
+
+(defn call-many
   [^IgniteCompute compute & f-and-args-seq]
   (.call compute ^Collection (mapv (fn [[f & args]] (ignite-callable f args)) f-and-args-seq)))
 
-(defn apply-seq
-  [^IgniteCompute compute f & args-seqs]
-  (.call compute ^Collection (mapv #(ignite-callable f %) args-seqs)))
+(defn broadcast
+  [^IgniteCompute compute f & args]
+  (.broadcast compute ^IgniteCallable (ignite-callable f args)))
