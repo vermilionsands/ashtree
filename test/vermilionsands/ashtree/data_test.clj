@@ -152,3 +152,16 @@
     (Thread/sleep 200)
     (is (= [[0 1]] @local-state))
     (is (= [[0 1] [0 1]] @test-helpers/watch-log))))
+
+(deftest skip-identity-test
+  (let [a (data/distributed-atom ignite-instance "skip-identity-test" 0 {:skip-identity true})
+        [local-watch local-state] (test-helpers/watch-and-store)]
+    (add-watch a :local local-watch)
+    ;; should be ignored
+    (swap! a identity)
+    (reset! a 0)
+    (is (= [] @local-state))
+    ;; should be triggered
+    (swap! a inc)
+    (reset! a 0)
+    (is (= [[0 1] [1 0] @local-state]))))
