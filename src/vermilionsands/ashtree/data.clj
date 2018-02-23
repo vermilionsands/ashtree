@@ -50,18 +50,22 @@
         new-val (if rest
                   (apply f old-val x y rest)
                   (apply f old-val args))]
-    (doseq [g [(deref (.-local_ctx ignite-atom)) (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]]
-      (validate (:validator g) new-val))
-    (if (.compareAndSet ^IgniteAtomicReference (.-state ignite-atom) old-val new-val)
+    (if (and (= old-val new-val) (.-skip_identity ignite-atom))
+      old-val
       (do
-        (notify ignite-atom old-val new-val)
-        new-val)
-      (recur ignite-atom f args))))
+        (doseq [g [(deref (.-local_ctx ignite-atom)) (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]]
+          (validate (:validator g) new-val))
+        (if (.compareAndSet ^IgniteAtomicReference (.-state ignite-atom) old-val new-val)
+          (do
+            (notify ignite-atom old-val new-val)
+            new-val)
+          (recur ignite-atom f args))))))
 
 (deftype IgniteAtom [^IgniteAtomicReference state
                      ^IgniteAtomicReference shared-ctx
                      local-ctx
-                     messaging]
+                     messaging
+                     skip-identity]
   IAtom
   (swap [this f]
     (value-swap* this f nil))
@@ -76,20 +80,26 @@
     (value-swap* this f [x y args]))
 
   (compareAndSet [this old-val new-val]
-    (validate (:validator @local-ctx) new-val)
-    (validate (:validator (.get shared-ctx)) new-val)
-    (let [ret (.compareAndSet state old-val new-val)]
-      (when ret
-        (notify this old-val new-val))
-      ret))
+    (if (and (= old-val new-val) skip-identity)
+      true
+      (do
+        (validate (:validator @local-ctx) new-val)
+        (validate (:validator (.get shared-ctx)) new-val)
+        (let [ret (.compareAndSet state old-val new-val)]
+          (when ret
+            (notify this old-val new-val))
+          ret))))
 
   (reset [this new-val]
     (let [old-val (deref this)]
-      (validate (:validator @local-ctx) new-val)
-      (validate (:validator (.get shared-ctx)) new-val)
-      (.set state new-val)
-      (notify this old-val new-val)
-      new-val))
+      (if (and (= old-val new-val) skip-identity)
+        old-val
+        (do
+          (validate (:validator @local-ctx) new-val)
+          (validate (:validator (.get shared-ctx)) new-val)
+          (.set state new-val)
+          (notify this old-val new-val)
+          new-val))))
 
   IMeta
   (meta [_]
@@ -222,17 +232,18 @@
 
   Opts:
 
-  :global-notification - defaults to false, if true watch notifications would be propagated to all instances
-  :notification-timeout - timeout for notifications, defaults to 0"
+  :global-notification - defaults to nil, if true watch notifications would be propagated to all instances
+  :notification-timeout - timeout for notifications, defaults to 0
+  :skip-identity - skip updating value and calling validators/notification logic when new-val equals to old-val"
   [^Ignite instance id x & [opts]]
   (let [id (atom-id id)
-        {:keys [global-notifications notification-timeout]} opts
+        {:keys [global-notifications notification-timeout skip-identity]} opts
         {:keys [state ctx messaging]}
         (if-not (find-reference instance id)
           (or (init-shared-objects instance id x global-notifications notification-timeout)
               (retrieve-shared-objects instance id))
           (retrieve-shared-objects instance id))
-        ignite-atom (->IgniteAtom state ctx (atom {}) messaging)]
+        ignite-atom (->IgniteAtom state ctx (atom {}) messaging skip-identity)]
     (when messaging
       (add-listener! ignite-atom))
     ignite-atom))
