@@ -207,6 +207,23 @@
     ignite-atom))
 
 (defn distributed-atom
+  "Creates a distributed atom, that is backed using Ignite's distributed datastructures. Can be used as a replacement for
+  standard atom.
+
+  Each atom is identified by it's id. If a backing state for given id already exists in an Ignite cluster it would be retrieved,
+  otherwise new backing state would be created.
+
+  Cache mode, replication and backups depend on Ignite instance configuration.
+
+  Args:
+  instance - Ignite instance, on which this atom's state would be created
+  id - unique atom identifier
+  x - initial value, if atom does not exist
+
+  Opts:
+
+  :global-notification - defaults to false, if true watch notifications would be propagated to all instances
+  :notification-timeout - timeout for notifications, defaults to 0"
   [^Ignite instance id x & [opts]]
   (let [id (atom-id id)
         {:keys [global-notifications notification-timeout]} opts
