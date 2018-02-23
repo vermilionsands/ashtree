@@ -1,5 +1,5 @@
 (ns vermilionsands.ashtree.data-test
-  (require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing]]
            [vermilionsands.ashtree.data :as data]
            [vermilionsands.ashtree.test-helpers :as test-helpers])
   (:import [java.util.concurrent CountDownLatch]
