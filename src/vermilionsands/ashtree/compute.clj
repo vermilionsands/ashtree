@@ -2,11 +2,11 @@
   (:require [clojure.core.memoize :as memoize]
             [vermilionsands.ashtree.function :as function])
   (:import [org.apache.ignite.lang IgniteCallable]
-           [org.apache.ignite IgniteCompute]
+           [org.apache.ignite IgniteCompute Ignite]
            [java.util Collection])
   (:gen-class))
 
-;; maybe make this configurable
+;;todo maybe make this configurable
 (def ^:private caching-eval (memoize/lru eval :lru/threshold 100))
 
 (deftype IgniteCallableWrapper [f args]
@@ -17,8 +17,15 @@
 (deftype EvalIgniteCallableWrapper [fn-form args]
   IgniteCallable
   (call [_]
-    (let [f (caching-eval fn-form)]
-      (apply f args))))
+    (apply (caching-eval fn-form) args)))
+
+(deftype SymbolIgniteCallableWrapper [sym args]
+  IgniteCallable
+  (call [_]
+    (let [f-var (resolve sym)]
+      (when-not f-var
+        (throw (IllegalArgumentException. (format "Cannot resolve %s to function!" sym))))
+      (apply @f-var args))))
 
 (defn ignite-callable [f args]
   (cond
@@ -28,10 +35,13 @@
     (list? f)
     (->EvalIgniteCallableWrapper f args)
 
+    (symbol? f)
+    (->SymbolIgniteCallableWrapper f args)
+
     :else (->IgniteCallableWrapper f args)))
 
 (defn call
-  [^IgniteCompute compute f & args]
+      [^IgniteCompute compute f & args]
   (.call compute ^IgniteCallable (ignite-callable f args)))
 
 (defn call-for
