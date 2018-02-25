@@ -227,14 +227,15 @@
 
   Args:
   instance - Ignite instance, on which this atom's state would be created
-  id - unique atom identifier
-  x - initial value, if atom does not exist
+  id       - unique atom identifier
+  x        - initial value, if atom does not exist
+  opts     - options map
 
-  Opts:
+  Options:
 
-  :global-notification - defaults to nil, if true watch notifications would be propagated to all instances
+  :global-notification  - defaults to nil, if true watch notifications would be propagated to all instances
   :notification-timeout - timeout for notifications, defaults to 0
-  :skip-identity - skip updating value and calling validators/notification logic when new-val equals to old-val"
+  :skip-identity        - skip updating value and calling validators/notification logic when new-val equals to old-val"
   [^Ignite instance id x & [opts]]
   (let [id (atom-id id)
         {:keys [global-notifications notification-timeout skip-identity]} opts
