@@ -24,7 +24,7 @@
   (call [_]
     (let [f-var (resolve sym)]
       (when-not f-var
-        (throw (IllegalArgumentException. (format "Cannot resolve %s to function!" sym))))
+        (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
       (apply @f-var args))))
 
 (defn ignite-callable [f args]
