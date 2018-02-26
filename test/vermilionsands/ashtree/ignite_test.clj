@@ -32,3 +32,9 @@
     (let [test-cluster (.forRemotes (.cluster *ignite-instance*))
           compute (ignite/compute *ignite-instance* {:cluster-group test-cluster})]
       (is (= test-cluster (.clusterGroup compute))))))
+
+(deftest with-compute-test
+  (testing "*compute* has correct value"
+    (let [compute (ignite/compute *ignite-instance*)]
+      (ignite/with-compute compute
+        (is (= ignite/*compute* compute))))))

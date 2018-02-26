@@ -1,6 +1,8 @@
 (ns vermilionsands.ashtree.ignite
   (:import [org.apache.ignite Ignite IgniteCompute]))
 
+(def ^:dynamic *compute* "Compute API instance to be used with with-compute" nil)
+
 (defn compute
   "Get an instance of compute API.
 
@@ -23,3 +25,9 @@
     (cond-> compute
             async         (.withAsync)
             executor      (.withExecutor executor))))
+
+(defmacro with-compute
+  "Evaluates body in a context in which *compute* is bound to a given compute API instance"
+  [compute & body]
+  `(binding [*compute* ~compute]
+     ~@body))
