@@ -1,6 +1,7 @@
 (ns vermilionsands.ashtree.compute
   (:require [clojure.core.memoize :as memoize]
-            [vermilionsands.ashtree.function :as function])
+            [vermilionsands.ashtree.function :as function]
+            [vermilionsands.ashtree.ignite :as ignite])
   (:import [clojure.lang IDeref]
            [java.util Collection]
            [org.apache.ignite.lang IgniteCallable IgniteFuture]
@@ -107,13 +108,59 @@
       :else (sync-fn compute task))))
 
 (defn call
+  "Execute a function on a cluster using compute API instance.
+
+  Function can be one of the following:
+  * clojure function - has to be available on both caller and target node, should be AOT compiled
+  * serializable function - from function namespace, would be passed as data, and evaled on target node
+  * fully qualified symbol - would be resolved to a function, only has to be valid on target node
+
+  Returns a function return value or an future if :async true is passed as one of the options.
+  Returned future is an IgniteFuture and can be derefed like standard future.
+
+  Args:
+  compute  - compute API instance
+  f        - function to execute
+  opts-map - options map
+
+  Options:
+  :async       - enable async execution if true
+  :timeout     - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+  :no-failover - execute with no failover mode if true
+  :name        - name for this task"
+
   [^IgniteCompute compute f & [{:keys [async name timeout no-failover] :as opts-map}]]
   (distributed-invoke compute (ignite-callable f) opts-map call-fn acall-fn))
 
+(defn call*
+  "See call. Uses ignite/*compute* as compute instance."
+  [f & [opts-map]]
+  (call ignite/*compute* f opts-map))
+
 (defn map-call
+  "Executes a collection of functions on a cluster using compute API instance, splitting them across cluster.
+  Returns a collection of results or a future if :async true is passed as one of the options.
+
+  Accepts a collection of functions instead of a single function.
+
+  See call documentation for more details."
   [^IgniteCompute compute fs & [{:keys [async name timeout no-failover] :as opts-map}]]
   (distributed-invoke compute (mapv ignite-callable fs) opts-map call-coll-fn acall-coll-fn))
 
+(defn map-call*
+  "See map-call. Uses ignite/*compute* as compute instance."
+  [fs & [opts-map]]
+  (map-call ignite/*compute* fs opts-map))
+
 (defn broadcast
+  "Execute a function on all nodes in a cluster.
+  Returns a collection of results or a future if :async true is passed as one of the options.
+
+  See call documentation for more details."
   [^IgniteCompute compute f & [{:keys [async name timeout no-failover] :as opts-map}]]
   (distributed-invoke compute (ignite-callable f) opts-map broadcast-fn abroadcast-fn))
+
+(defn broadcast*
+  "See broadcast. Uses ignite/*compute* as compute instance."
+  [f & [opts-map]]
+  (broadcast ignite/*compute* f opts-map))
