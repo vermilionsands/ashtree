@@ -1,6 +1,6 @@
 (ns vermilionsands.ashtree.data
   (:import [clojure.lang IAtom IDeref IMeta IReference IRef]
-           [org.apache.ignite Ignite IgniteAtomicReference IgniteMessaging]
+           [org.apache.ignite Ignite IgniteAtomicReference IgniteMessaging IgniteLock]
            [org.apache.ignite.lang IgniteBiPredicate]))
 
 (defprotocol DistributedAtom
@@ -34,32 +34,9 @@
     (catch Exception e
       (throw (IllegalStateException. "Invalid reference state!" e)))))
 
-(defn- notify
-  [ignite-atom old-val new-val]
-  (let [messaging (.-messaging ignite-atom)
-        {:keys [notification-topic notification-timeout]} (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]
-    (if notification-topic
-      (.sendOrdered ^IgniteMessaging messaging notification-topic [old-val new-val] notification-timeout)
-      (doseq [[k f] (concat (.getWatches ignite-atom) (get-shared-watches ignite-atom))]
-        (when f
-          (f k ignite-atom old-val new-val))))))
-
-(defn- value-swap* [ignite-atom f args]
-  (let [[x y rest] args
-        old-val (deref ignite-atom)
-        new-val (if rest
-                  (apply f old-val x y rest)
-                  (apply f old-val args))]
-    (if (and (= old-val new-val) (.-skip_identity ignite-atom))
-      old-val
-      (do
-        (doseq [g [(deref (.-local_ctx ignite-atom)) (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]]
-          (validate (:validator g) new-val))
-        (if (.compareAndSet ^IgniteAtomicReference (.-state ignite-atom) old-val new-val)
-          (do
-            (notify ignite-atom old-val new-val)
-            new-val)
-          (recur ignite-atom f args))))))
+;; forward declarations to allow using hints to IgniteAtom
+(declare notify)
+(declare value-swap*)
 
 (deftype IgniteAtom [^IgniteAtomicReference state
                      ^IgniteAtomicReference shared-ctx
@@ -171,19 +148,46 @@
   (get-shared-watches [_]
     (:watches (.get shared-ctx))))
 
+(defn- notify
+  [^IgniteAtom ignite-atom old-val new-val]
+  (let [messaging (.-messaging ignite-atom)
+        {:keys [notification-topic notification-timeout]} (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]
+    (if notification-topic
+      (.sendOrdered ^IgniteMessaging messaging notification-topic [old-val new-val] notification-timeout)
+      (doseq [[k f] (concat (.getWatches ignite-atom) (get-shared-watches ignite-atom))]
+        (when f
+          (f k ignite-atom old-val new-val))))))
+
+(defn- value-swap* [^IgniteAtom ignite-atom f args]
+  (let [[x y rest] args
+        old-val (deref ignite-atom)
+        new-val (if rest
+                  (apply f old-val x y rest)
+                  (apply f old-val args))]
+    (if (and (= old-val new-val) (.-skip_identity ignite-atom))
+      old-val
+      (do
+        (doseq [g [(deref (.-local_ctx ignite-atom)) (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom))]]
+          (validate (:validator g) new-val))
+        (if (.compareAndSet ^IgniteAtomicReference (.-state ignite-atom) old-val new-val)
+          (do
+            (notify ignite-atom old-val new-val)
+            new-val)
+          (recur ignite-atom f args))))))
+
 (defn- atom-id [id]
   (str "ashtree-atom-" (name id)))
 
-(defn- find-reference [instance id]
+(defn- find-reference [^Ignite instance id]
   (some? (.atomicReference instance id nil false)))
 
-(defn- retrieve-shared-objects [instance id]
+(defn- retrieve-shared-objects [^Ignite instance id]
   (let [state     (.atomicReference instance id nil false)
         ctx       (.atomicReference instance (str id "-ctx") nil false)
         messaging (when (:notifications? (.get ctx)) (.message instance))]
     {:state state :ctx ctx :messaging messaging}))
 
-(defn- init-shared-objects [instance id init notifications? notification-timeout]
+(defn- init-shared-objects [^Ignite instance id init notifications? notification-timeout]
   (let [lock (.reentrantLock instance id true true true)]
     (.lock lock)
     (try
@@ -201,7 +205,7 @@
       (finally
         (.unlock lock)))))
 
-(defn- add-listener! [ignite-atom]
+(defn- add-listener! [^IgniteAtom ignite-atom]
   (let [listener-id
         (.localListen
           ^IgniteMessaging (.-messaging ignite-atom)
