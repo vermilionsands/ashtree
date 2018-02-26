@@ -4,16 +4,20 @@
             [vermilionsands.ashtree.fixtures :as fixtures :refer [*ignite-instance*]]
             [vermilionsands.ashtree.function :as function]
             [vermilionsands.ashtree.ignite :as ignite]
-            [vermilionsands.ashtree.test-helpers :as test-helpers]))
+            [vermilionsands.ashtree.test-helpers :as test-helpers])
+  (:import [org.apache.ignite.compute ComputeTaskTimeoutException]
+           [org.apache.ignite.lang IgniteFuture]))
 
 (use-fixtures :once (fixtures/ignite-fixture))
 
 (defn- compute []
   (ignite/compute *ignite-instance*))
 
-(deftest call-function-test
-  (testing "Call test"
-    (let [result (compute/call (compute) (partial test-helpers/to-upper-case "Odin"))]
+(def test-fn test-helpers/to-upper-case)
+
+(deftest call-test
+  (testing "Call using function"
+    (let [result (compute/call (compute) (partial test-fn "Odin"))]
       (is (= "ODIN" result))))
   (testing "Alternative input functions"
     (testing "Call using symbol"
@@ -21,4 +25,17 @@
         (is (= "ODIN" result))))
     (testing "Call using serializable function"
       (let [result (compute/call (compute) (function/sfn [] (.toUpperCase "Odin")))]
-        (is (= "ODIN" result))))))
+        (is (= "ODIN" result)))))
+  (testing "Call with async flag"
+    (let [result (compute/call (compute) (partial test-fn "future") {:async true})]
+      (is (instance? IgniteFuture result))
+      (is (= "FUTURE" @result))))
+  (testing "Call with timeout"
+    (is (thrown? ComputeTaskTimeoutException
+                 (compute/call (compute) (function/sfn [] (Thread/sleep 100) :ok) {:timeout 1})))))
+
+(deftest map-call-test
+  (let [result (compute/map-call
+                 (compute)
+                 [(partial test-fn "Odin") (partial test-fn "Thor")])]
+    (is #{"THOR" "ODIN"} (set result))))

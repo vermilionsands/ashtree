@@ -23,10 +23,41 @@
     (let [f ((or *callable-eval* eval) fn-form)]
       (f))))
 
-(deftype AshtreeFuture [^IgniteFuture ignite-future]
+(deftype AshtreeFuture [^IgniteFuture future]
   IDeref
   (deref [_]
-    (.get ignite-future)))
+    (.get future))
+
+  IgniteFuture
+  (cancel [_]
+    (.cancel future))
+
+  (chain [_ on-done]
+    (.chain future on-done))
+
+  (chainAsync [_ on-done exec]
+    (.chainAsync future on-done exec))
+
+  (get [_]
+    (.get future))
+
+  (get [_ timeout]
+    (.get future timeout))
+
+  (get [_ timeout unit]
+    (.get future timeout unit))
+
+  (isCancelled [_]
+    (.isCancelled future))
+
+  (isDone [_]
+    (.isDone future))
+
+  (listen [_ listener]
+    (.listen future listener))
+
+  (listenAsync [_ listener exec]
+    (.listenAsync future listener exec)))
 
 (defn symbol-fn
   "Returns a function that tries to resolve a symbol sym to a var and calls it with supplied args.

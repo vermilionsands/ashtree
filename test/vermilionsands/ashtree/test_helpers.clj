@@ -1,5 +1,6 @@
 (ns vermilionsands.ashtree.test-helpers
-  (:require [clojure.string :as string]))
+  (:require [clojure.string :as string])
+  (:gen-class))
 
 (defn less-than-10 [x]
   (< x 10))
