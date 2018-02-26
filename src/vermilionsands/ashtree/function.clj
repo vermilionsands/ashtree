@@ -64,3 +64,6 @@
   (let [form (cons 'fn (rest (-> f meta ::form)))
         bindings (-> f meta ::bindings)]
     `(~'let [~@bindings] ~form)))
+
+(defn serializable? [x]
+  (= (type x) ::serializable-fn))
