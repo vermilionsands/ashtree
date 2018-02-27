@@ -1,16 +1,31 @@
 (ns vermilionsands.ashtree.fixtures
-  (:import [org.apache.ignite Ignition]
-           [org.apache.ignite.configuration IgniteConfiguration]))
+  (:import [org.apache.ignite Ignition Ignite]
+           [org.apache.ignite.cache CacheMode]
+           [org.apache.ignite.configuration IgniteConfiguration AtomicConfiguration]))
 
 (def ^:dynamic *ignite-instance* nil)
 
-(defn ignite-fixture []
-  (fn [f]
-    (let [cfg (doto (IgniteConfiguration.)
-                (.setIgniteInstanceName "test-instance"))
-          instance (Ignition/start cfg)]
-      (try
-        (binding [*ignite-instance* instance]
-          (f))
-        (finally
-          (Ignition/stop "test-instance" true))))))
+(defn- instance-config []
+  (doto (IgniteConfiguration.)
+    (.setPeerClassLoadingEnabled true)
+    (.setAtomicConfiguration
+      (doto (AtomicConfiguration.)
+        (.setCacheMode CacheMode/REPLICATED)))
+    (.setIgniteInstanceName (name (gensym "test-instance-")))))
+
+(defn ignite-fixture
+  ([]
+   (ignite-fixture 1 true))
+  ([n bind?]
+   (when (< n 1)
+     (throw (IllegalArgumentException. (format "Number of instances cannot be lower than 1! Got %s" n))))
+   (fn [f]
+     (let [instances (mapv (fn [_] (Ignition/start ^IgniteConfiguration (instance-config))) (range n))]
+       (try
+         (if bind?
+           (binding [*ignite-instance* (first instances)]
+             (f))
+           (f))
+         (finally
+           (doseq [i instances]
+             (Ignition/stop (.getIgniteInstanceName (.configuration ^Ignite i)) true))))))))
