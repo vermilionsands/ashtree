@@ -7,6 +7,6 @@
                  [org.clojure/core.memoize "0.5.9"]
                  [org.apache.ignite/ignite-core "2.3.0"]]
   :profiles {:dev  {:source-paths ["dev"]
-                    :aot [functions vermilionsands.ashtree.compute]}
-             :test {:aot [vermilionsands.ashtree.test-helpers]}}
-  :global-vars {*warn-on-reflection* true})
+                    :aot [functions vermilionsands.ashtree.compute]
+                    :global-vars {*warn-on-reflection* true}}
+             :test {:aot [vermilionsands.ashtree.test-helpers]}})
