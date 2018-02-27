@@ -8,7 +8,7 @@
   (:import [org.apache.ignite.compute ComputeTaskTimeoutException]
            [org.apache.ignite.lang IgniteFuture]))
 
-(use-fixtures :once (fixtures/ignite-fixture))
+(use-fixtures :once (fixtures/ignite-fixture 2 true))
 
 (defn- compute []
   (ignite/compute *ignite-instance*))
@@ -37,5 +37,9 @@
 (deftest map-call-test
   (let [result (compute/map-call
                  (compute)
-                 [(partial test-fn "Odin") (partial test-fn "Thor")])]
-    (is #{"THOR" "ODIN"} (set result))))
+                 [(partial test-fn "Odin") (partial test-fn "Thor") (partial test-fn "Loki") (partial test-fn "Tyr")])]
+    (is (= #{"THOR" "ODIN" "TYR" "LOKI"} (set result)))))
+
+(deftest broadcast-test
+  (let [result (compute/broadcast (compute) (partial test-fn "Echo"))]
+    (is (= ["ECHO" "ECHO"] result))))
