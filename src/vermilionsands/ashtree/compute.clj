@@ -112,7 +112,7 @@
 
   Function can be one of the following:
   * clojure function - has to be available on both caller and target node, should be AOT compiled
-  * serializable function - from function namespace, would be passed as data, and evaled on target node
+  * serializable function - from function namespace, would be passed as data, and evaled on target node (EXPERIMENTAL!!!)
   * fully qualified symbol - would be resolved to a function, only has to be valid on target node
 
   Returns a function return value or an future if :async true is passed as one of the options.

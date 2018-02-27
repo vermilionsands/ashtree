@@ -1,5 +1,6 @@
 (ns vermilionsands.ashtree.test-helpers
   (:require [clojure.string :as string])
+  (:import [org.apache.ignite Ignite])
   (:gen-class))
 
 (defn less-than-10 [x]
@@ -25,3 +26,15 @@
 ;; deliberately complicated to avoid using only java/core methods and fns
 (defn to-upper-case [x]
   (to-upper-case* x))
+
+(defn get-node-id [^Ignite ignite]
+  (.id (.localNode (.cluster ignite))))
+
+(defn inc-node-state
+  [^Ignite ignite]
+  (let [local-node-map (.nodeLocalMap (.cluster ignite))
+        v (.get local-node-map "counter")
+        counter-atom (or v (atom 0))]
+    (when-not v
+      (.putIfAbsent local-node-map "counter" counter-atom))
+    (swap! counter-atom inc)))
