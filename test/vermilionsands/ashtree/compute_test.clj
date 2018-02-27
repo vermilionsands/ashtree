@@ -13,11 +13,11 @@
 (defn- compute []
   (ignite/compute *ignite-instance*))
 
-(def test-fn test-helpers/to-upper-case)
+(defn test-fn [x] (partial test-helpers/to-upper-case x))
 
 (deftest call-test
   (testing "Call using function"
-    (let [result (compute/call (compute) (partial test-fn "Odin"))]
+    (let [result (compute/call (compute) (test-fn "Odin"))]
       (is (= "ODIN" result))))
   (testing "Alternative input functions"
     (testing "Call using symbol"
@@ -27,7 +27,7 @@
       (let [result (compute/call (compute) (function/sfn [] (.toUpperCase "Odin")))]
         (is (= "ODIN" result)))))
   (testing "Call with async flag"
-    (let [result (compute/call (compute) (partial test-fn "future") {:async true})]
+    (let [result (compute/call (compute) (test-fn "future") {:async true})]
       (is (instance? IgniteFuture result))
       (is (= "FUTURE" @result))))
   (testing "Call with timeout"
@@ -37,9 +37,15 @@
 (deftest map-call-test
   (let [result (compute/map-call
                  (compute)
-                 [(partial test-fn "Odin") (partial test-fn "Thor") (partial test-fn "Loki") (partial test-fn "Tyr")])]
+                 [(test-fn "Odin") (test-fn "Thor") (test-fn "Loki") (test-fn "Tyr")])]
     (is (= #{"THOR" "ODIN" "TYR" "LOKI"} (set result)))))
 
 (deftest broadcast-test
-  (let [result (compute/broadcast (compute) (partial test-fn "Echo"))]
+  (let [result (compute/broadcast (compute) (test-fn "Echo"))]
     (is (= ["ECHO" "ECHO"] result))))
+
+(deftest with-compute-test
+  (ignite/with-compute (compute)
+    (is (= "ODIN" (compute/call* (test-fn "Odin"))))
+    (is (= #{"ODIN" "THOR"} (set (compute/map-call* [(test-fn "Odin") (test-fn "Thor")]))))
+    (is (= ["ODIN" "ODIN"] (compute/broadcast* (test-fn "Odin"))))))
