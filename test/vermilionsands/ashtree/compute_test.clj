@@ -7,12 +7,19 @@
             [vermilionsands.ashtree.test-helpers :as test-helpers :refer [to-upper-case]])
   (:import [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException]
-           [org.apache.ignite.lang IgniteFuture]))
+           [org.apache.ignite.lang IgniteFuture]
+           (org.apache.ignite Ignite)))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
 (defn- compute []
   (ignite/compute *ignite-instance*))
+
+(deftest with-compute-test
+  (ignite/with-compute (compute)
+    (is (= "ODIN" (compute/invoke* to-upper-case "Odin")))
+    (is (= #{"ODIN" "THOR"} (set (compute/invoke-seq* [to-upper-case to-upper-case] [["Odin"] ["Thor"]]))))
+    (is (= ["ODIN" "ODIN"] (compute/broadcast* to-upper-case "Odin")))))
 
 (deftest invoke-test
   (testing "invoke using function"
@@ -44,17 +51,16 @@
                [["Odin"] nil []]))))))
 
 (deftest broadcast-test
-  (testing "Basic broadcast"
-    (is (= ["ECHO" "ECHO"] (compute/broadcast (compute) to-upper-case "Echo"))))
-  (testing "Passing Ignite instance to function"
-    (is (every? #(instance? UUID %)
-                (compute/broadcast (compute) (partial test-helpers/get-node-id *ignite-instance*))))))
-
-(deftest with-compute-test
   (ignite/with-compute (compute)
-    (is (= "ODIN" (compute/invoke* to-upper-case "Odin")))
-    (is (= #{"ODIN" "THOR"} (set (compute/invoke-seq* [to-upper-case to-upper-case] [["Odin"] ["Thor"]]))))
-    (is (= ["ODIN" "ODIN"] (compute/broadcast* to-upper-case "Odin")))))
+    (testing "Basic broadcast"
+      (is (= ["ECHO" "ECHO"] (compute/broadcast* to-upper-case "Echo"))))
+    (testing "Passing Ignite instance to function"
+      (is (every? #(instance? UUID %) (compute/broadcast* test-helpers/get-node-id *ignite-instance*))))
+    (testing "Passing Ignite instance to serializable function"
+      (is (every? #(instance? UUID %)
+                  (compute/broadcast*
+                    (function/sfn [ignite] (.id (.localNode (.cluster ignite))))
+                    *ignite-instance*))))))
 
 (deftest with-opts-test
   (ignite/with-compute (compute)
