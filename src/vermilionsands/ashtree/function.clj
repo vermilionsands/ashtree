@@ -62,8 +62,11 @@
 
 (defn eval-form [f]
   (let [form (cons 'fn (rest (-> f meta ::form)))
-        bindings (-> f meta ::bindings)]
-    `(~'let [~@bindings] ~form)))
+        bindings (-> f meta ::bindings)
+        meta' (dissoc (meta f) ::form ::bindings ::name :type)]
+    (with-meta
+      `(~'let [~@bindings] ~form)
+      meta')))
 
 (defn serializable? [x]
   (= (type x) ::serializable-fn))
