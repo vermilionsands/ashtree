@@ -14,13 +14,13 @@
   By default it would keep 100 elements using LRU memoization."
   (memoize/lru eval :lru/threshold 100))
 
-(deftype IgniteFn [f args meta]
+(deftype IgniteFn [f args]
   IgniteCallable
   (call [_]
     (apply f args))
 
   IMeta
-  (meta [_] meta))
+  (meta [_] (meta f)))
 
 (deftype IgniteReducerFn [f state]
    IgniteReducer
@@ -100,10 +100,9 @@
   args - argument vector for task, can be nil, or empty if task is a no-arg function"
   [task args]
   (cond
-    (function/serializable? task) (let [form (function/eval-form task)]
-                                    (->IgniteFn (eval-fn form) args (meta form)))
-    (symbol? task)                (->IgniteFn (symbol-fn task) args (meta task))
-    (fn? task)                    (->IgniteFn task args (meta task))
+    (function/serializable? task) (->IgniteFn (eval-fn (function/eval-form task)) args)
+    (symbol? task)                (->IgniteFn (symbol-fn task) args)
+    (fn? task)                    (->IgniteFn task args)
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
 
 (defn with-opts
