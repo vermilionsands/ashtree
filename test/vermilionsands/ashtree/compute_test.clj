@@ -7,8 +7,8 @@
             [vermilionsands.ashtree.test-helpers :as test-helpers :refer [to-upper-case]])
   (:import [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException]
-           [org.apache.ignite.lang IgniteFuture]
-           (org.apache.ignite Ignite)))
+           [org.apache.ignite.lang IgniteFuture]))
+
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
@@ -88,3 +88,13 @@
            (compute/invoke-seq
              (compute)
              (repeat 3 (partial test-helpers/inc-node-state *ignite-instance*)))))))
+
+(deftest reducer-test
+  (ignite/with-compute (compute)
+    (testing "Reducer without init value"
+      (is (#{"RAGNAROK" "ROKRAGNA"} ;; there is no ordering guarantee
+            (compute/invoke-seq* (repeat 2 to-upper-case) [["RAGNA"] ["ROK"]] (compute/reducer str)))))
+    (testing "Reducer with init value"
+      (is (= 7
+             (compute/invoke-seq* (repeat 2 (partial * 2)) [[1] [2]] (compute/reducer + 1)))))))
+

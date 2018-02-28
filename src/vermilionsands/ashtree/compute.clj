@@ -89,7 +89,7 @@
         (apply @f-var args)))
     {::opts (-> sym meta ::opts)}))
 
-(defn ignite-callable
+(defn callable
   "Create an IgniteCallable instance for a task.
 
   Accepts either a standard clojure function or a serializable function (from function namespace), which would be
@@ -106,7 +106,7 @@
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
 
 (defn with-opts
-  "Append configuration options as meta to given task.
+  "Append configuration options as meta to a given task.
 
   A task can be a function, a symbol or a collection that supports metadata.
 
@@ -130,19 +130,35 @@
     no-failover (.withNoFailover)
     name        (.withName name)))
 
-(def ^:private call-fn       #(.call ^IgniteCompute %1 ^IgniteCallable %2))
-(def ^:private acall-fn      #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2))
-(def ^:private call-coll-fn  #(.call ^IgniteCompute %1 ^Collection %2))
-(def ^:private acall-coll-fn #(.callAsync ^IgniteCompute %1 ^Collection %2))
-(def ^:private broadcast-fn  #(.broadcast ^IgniteCompute %1 ^IgniteCallable %2))
-(def ^:private abroadcast-fn #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))
+(defn reducer
+  [task & [init-value]]
+  (let [state (atom init-value)]
+    (cond
+      (function/serializable? task) (->IgniteReducerFn (eval-fn (function/eval-form task)) state)
+      (symbol? task)                (->IgniteReducerFn (symbol-fn task) state)
+      (fn? task)                    (->IgniteReducerFn task state)
+      :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteReducer from %s" task))))))
 
-(defn- distributed-invoke [compute task sync-fn async-fn]
+;; this is getting slightly out of hand...
+(def ^:private call-fn       (fn [c x _] (.call ^IgniteCompute c ^IgniteCallable x)))
+(def ^:private acall-fn      (fn [c x _] (.callAsync ^IgniteCompute c ^IgniteCallable x)))
+(def ^:private broadcast-fn  (fn [c x _] (.broadcast ^IgniteCompute c ^IgniteCallable x)))
+(def ^:private abroadcast-fn (fn [c x _] (.broadcastAsync ^IgniteCompute c ^IgniteCallable x)))
+(def ^:private call-coll-fn  (fn [c x r]
+                               (if r
+                                 (.call ^IgniteCompute c ^Collection x ^IgniteReducer r)
+                                 (.call ^IgniteCompute c ^Collection x))))
+(def ^:private acall-coll-fn (fn [c x r]
+                               (if r
+                                 (.callAsync ^IgniteCompute c ^Collection x ^IgniteReducer r)
+                                 (.callAsync ^IgniteCompute c ^Collection x))))
+
+(defn- distributed-invoke [compute task sync-fn async-fn & [reducer]]
   (let [{:keys [::async ::name ::timeout ::no-failover]} (-> task meta ::opts)
         compute ^IgniteCompute (task-compute compute name timeout no-failover)]
     (cond
-      async (->AshtreeFuture (async-fn compute task))
-      :else (sync-fn compute task))))
+      async (->AshtreeFuture (async-fn compute task reducer))
+      :else (sync-fn compute task reducer))))
 
 (defn invoke
   "Execute a task on a cluster using compute API instance.
@@ -163,7 +179,7 @@
   Optional:
   args     - arguments to task"
   [^IgniteCompute compute task & args]
-  (distributed-invoke compute (ignite-callable task args) call-fn acall-fn))
+  (distributed-invoke compute (callable task args) call-fn acall-fn))
 
 (defn invoke*
   "See invoke. Uses ignite/*compute* as compute instance."
@@ -181,24 +197,26 @@
   Optional:
   args    - sequence of vectors with arguments to tasks. First vector would be applied to first task and so on.
             Can be skipped if all task are no-arg. If some tasks are no-arg use nil or empty-vector as their args.
+  reducer - if provided it would be called on the results reducing them into a single value.
+            It should accept 2 arguments (state, x) and should follow the same rules as task.
 
-  See call documentation for more details."
-  [^IgniteCompute compute tasks & [args]]
-  (let [tasks (mapv ignite-callable tasks (or args (repeat nil)))]
-    (distributed-invoke compute tasks call-coll-fn acall-coll-fn)))
+  See invoke documentation for more details."
+  [^IgniteCompute compute tasks & [args reducer]]
+  (let [tasks (mapv callable tasks (or args (repeat nil)))]
+    (distributed-invoke compute tasks call-coll-fn acall-coll-fn reducer)))
 
 (defn invoke-seq*
   "See invoke-seq. Uses ignite/*compute* as compute instance."
-  [tasks & [args]]
-  (invoke-seq ignite/*compute* tasks args))
+  [tasks & [args reducer]]
+  (invoke-seq ignite/*compute* tasks args reducer))
 
 (defn broadcast
   "Execute a task on all nodes in a cluster.
   Returns a collection of results or a future if :async true is passed as one of the options.
 
-  See call documentation for more details."
+  See invoke documentation for more details."
   [^IgniteCompute compute task & args]
-  (distributed-invoke compute (ignite-callable task args) broadcast-fn abroadcast-fn))
+  (distributed-invoke compute (callable task args) broadcast-fn abroadcast-fn))
 
 (defn broadcast*
   "See broadcast. Uses ignite/*compute* as compute instance."
