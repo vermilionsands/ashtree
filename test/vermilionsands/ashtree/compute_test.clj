@@ -14,8 +14,6 @@
 (defn- compute []
   (ignite/compute *ignite-instance*))
 
-;; opts tests - do osobnego testu
-
 (deftest invoke-test
   (testing "invoke using function"
     (is (= "ODIN" (compute/invoke (compute) to-upper-case "Odin"))))
@@ -25,14 +23,7 @@
     (testing "invoke using symbol"
       (is (= "ODIN" (compute/invoke (compute) 'vermilionsands.ashtree.test-helpers/to-upper-case "Odin"))))
     (testing "invoke using serializable function"
-      (is (= "ODIN" (compute/invoke (compute) (function/sfn [s] (.toUpperCase s)) "Odin")))))
-  (testing "invoke with async flag"
-    (let [result (compute/invoke (compute) (compute/with-opts to-upper-case :async true) "future")]
-      (is (instance? IgniteFuture result))
-      (is (= "FUTURE" @result))))
-  (testing "invoke with timeout"
-    (is (thrown? ComputeTaskTimeoutException
-                 (compute/invoke (compute) (compute/with-opts (function/sfn [] (Thread/sleep 100) :ok) :timeout 1))))))
+      (is (= "ODIN" (compute/invoke (compute) (function/sfn [s] (.toUpperCase s)) "Odin"))))))
 
 (deftest invoke-seq-test
   (testing "invoke-seq with no-arg functions"
@@ -64,6 +55,24 @@
     (is (= "ODIN" (compute/invoke* to-upper-case "Odin")))
     (is (= #{"ODIN" "THOR"} (set (compute/invoke-seq* [to-upper-case to-upper-case] [["Odin"] ["Thor"]]))))
     (is (= ["ODIN" "ODIN"] (compute/broadcast* to-upper-case "Odin")))))
+
+(deftest with-opts-test
+  (ignite/with-compute (compute)
+    (testing "invoke with async flag and normal function"
+      (let [result (compute/invoke* (compute/with-opts to-upper-case :async true) "future")]
+        (is (instance? IgniteFuture result))
+        (is (= "FUTURE" @result))))
+    (testing "invoke with async flag and serializable function"
+      (let [result (compute/invoke* (compute/with-opts (function/sfn [x] (.toUpperCase x)) :async true) "future")]
+        (is (instance? IgniteFuture result))
+        (is (= "FUTURE" @result))))
+    (testing "invoke with async flag and symbol"
+      (let [result (compute/invoke* (compute/with-opts 'vermilionsands.ashtree.test-helpers/to-upper-case :async true) "future")]
+        (is (instance? IgniteFuture result))
+        (is (= "FUTURE" @result))))
+    (testing "invoke with timeout"
+      (is (thrown? ComputeTaskTimeoutException
+                   (compute/invoke* (compute/with-opts (function/sfn [] (Thread/sleep 100) :ok) :timeout 1)))))))
 
 (deftest per-node-shared-state-test
   ;; call 3 times on 2 nodes - 1 would be called 2 times, one 1 time
