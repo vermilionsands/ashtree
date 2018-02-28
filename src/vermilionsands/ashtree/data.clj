@@ -1,5 +1,6 @@
 (ns vermilionsands.ashtree.data
   (:import [clojure.lang IAtom IDeref IMeta IReference IRef]
+           [java.io Closeable]
            [org.apache.ignite Ignite IgniteAtomicReference IgniteMessaging IgniteLock]
            [org.apache.ignite.lang IgniteBiPredicate]))
 
@@ -146,7 +147,12 @@
     this)
 
   (get-shared-watches [_]
-    (:watches (.get shared-ctx))))
+    (:watches (.get shared-ctx)))
+
+  Closeable
+  (close [_]
+    (.close ^IgniteAtomicReference shared-ctx)
+    (.close ^IgniteAtomicReference state)))
 
 (defn- notify
   [^IgniteAtom ignite-atom old-val new-val]
@@ -252,3 +258,9 @@
     (when messaging
       (add-listener! ignite-atom))
     ignite-atom))
+
+(defn close!
+  "Closes a distributed atom, closing/destroying underlying distributed state objects.
+  Returns nil."
+  [^IgniteAtom ignite-atom]
+  (.close ignite-atom))

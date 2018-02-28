@@ -166,3 +166,13 @@
     (swap! a inc)
     (reset! a 0)
     (is (= [[0 1] [1 0] @local-state]))))
+
+(deftest close-test
+  (let [a (data/distributed-atom *ignite-instance* "close-test" 0)
+        b (data/distributed-atom *ignite-instance* "close-test" 0)]
+    (swap! a inc)
+    (is (= 1 @a))
+    (is (= 1 @b))
+    (data/close! a)
+    (is (thrown? IllegalStateException (= 1 @a)))
+    (is (thrown? IllegalStateException (= 1 @b)))))
