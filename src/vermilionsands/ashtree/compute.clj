@@ -160,7 +160,7 @@
       async (->AshtreeFuture (async-fn compute task reducer))
       :else (sync-fn compute task reducer))))
 
-(defn invoke
+(defn invoke*
   "Execute a task on a cluster using compute API instance.
 
   A task can be one of the following:
@@ -181,12 +181,12 @@
   [^IgniteCompute compute task & args]
   (distributed-invoke compute (callable task args) call-fn acall-fn))
 
-(defn invoke*
-  "See invoke. Uses ignite/*compute* as compute instance."
+(defn invoke
+  "See invoke*. Uses ignite/*compute* as compute instance."
   [task & args]
-  (apply invoke ignite/*compute* task args))
+  (apply invoke* ignite/*compute* task args))
 
-(defn invoke-seq
+(defn invoke-seq*
   "Executes a seq of tasks on a cluster using compute API instance, splitting them across cluster.
   Returns a collection of results or a future if :async true is passed as one of the options.
 
@@ -200,17 +200,17 @@
   reducer - if provided it would be called on the results reducing them into a single value.
             It should accept 2 arguments (state, x) and should follow the same rules as task.
 
-  See invoke documentation for more details."
+  See invoke* documentation for more details."
   [^IgniteCompute compute tasks & [args reducer]]
   (let [tasks (mapv callable tasks (or args (repeat nil)))]
     (distributed-invoke compute tasks call-coll-fn acall-coll-fn reducer)))
 
-(defn invoke-seq*
-  "See invoke-seq. Uses ignite/*compute* as compute instance."
+(defn invoke-seq
+  "See invoke-seq*. Uses ignite/*compute* as compute instance."
   [tasks & [args reducer]]
-  (invoke-seq ignite/*compute* tasks args reducer))
+  (invoke-seq* ignite/*compute* tasks args reducer))
 
-(defn broadcast
+(defn broadcast*
   "Execute a task on all nodes in a cluster.
   Returns a collection of results or a future if :async true is passed as one of the options.
 
@@ -218,7 +218,7 @@
   [^IgniteCompute compute task & args]
   (distributed-invoke compute (callable task args) broadcast-fn abroadcast-fn))
 
-(defn broadcast*
-  "See broadcast. Uses ignite/*compute* as compute instance."
+(defn broadcast
+  "See broadcast*. Uses ignite/*compute* as compute instance."
   [task & args]
-  (apply broadcast ignite/*compute* task args))
+  (apply broadcast* ignite/*compute* task args))
