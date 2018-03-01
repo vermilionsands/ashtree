@@ -89,6 +89,9 @@
         (apply @f-var args)))
     {::opts (-> sym meta ::opts)}))
 
+(defn- callable? [task]
+  (instance? IgniteCallable task))
+
 (defn callable
   "Create an IgniteCallable instance for a task.
 
@@ -100,68 +103,49 @@
   args - argument vector for task, can be nil, or empty if task is a no-arg function"
   [task args]
   (cond
+    (callable? task)              task
     (function/serializable? task) (->IgniteFn (eval-fn (function/eval-form task)) args)
     (symbol? task)                (->IgniteFn (symbol-fn task) args)
     (fn? task)                    (->IgniteFn task args)
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
 
-(defn with-opts
-  "Append configuration options as meta to a given task.
-
-  A task can be a function, a symbol or a collection that supports metadata.
-
-  Options:
-  :async       - enable async execution if true
-  :timeout     - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
-  :no-failover - execute with no failover mode if true
-  :name        - name for this task"
-  [task & options]
-  (let [{:keys [async name timeout no-failover]} (apply hash-map options)
-        m (cond-> {}
-                  async       (assoc ::async true)
-                  name        (assoc ::name name)
-                  timeout     (assoc ::timeout timeout)
-                  no-failover (assoc ::no-failover true))]
-    (vary-meta task assoc ::opts m)))
-
-(defn- task-compute [compute name timeout no-failover]
-  (cond-> ^IgniteCompute compute
-    timeout     (.withTimeout timeout)
-    no-failover (.withNoFailover)
-    name        (.withName name)))
+(defn- reducer? [task]
+  (instance? IgniteReducer task))
 
 (defn reducer
   [task & [init-value]]
   (let [state (atom init-value)]
     (cond
+      (reducer? task)               task
       (function/serializable? task) (->IgniteReducerFn (eval-fn (function/eval-form task)) state)
       (symbol? task)                (->IgniteReducerFn (symbol-fn task) state)
       (fn? task)                    (->IgniteReducerFn task state)
       :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteReducer from %s" task))))))
 
-;; this is getting slightly out of hand...
-(def ^:private call-fn       (fn [c x _] (.call ^IgniteCompute c ^IgniteCallable x)))
-(def ^:private acall-fn      (fn [c x _] (.callAsync ^IgniteCompute c ^IgniteCallable x)))
-(def ^:private broadcast-fn  (fn [c x _] (.broadcast ^IgniteCompute c ^IgniteCallable x)))
-(def ^:private abroadcast-fn (fn [c x _] (.broadcastAsync ^IgniteCompute c ^IgniteCallable x)))
-(def ^:private call-coll-fn  (fn [c x r]
-                               (if r
-                                 (.call ^IgniteCompute c ^Collection x ^IgniteReducer r)
-                                 (.call ^IgniteCompute c ^Collection x))))
-(def ^:private acall-coll-fn (fn [c x r]
-                               (if r
-                                 (.callAsync ^IgniteCompute c ^Collection x ^IgniteReducer r)
-                                 (.callAsync ^IgniteCompute c ^Collection x))))
+(defn- compute-for-task [compute name timeout no-failover]
+  (cond-> ^IgniteCompute compute
+    timeout     (.withTimeout timeout)
+    no-failover (.withNoFailover)
+    name        (.withName name)))
 
-(defn- distributed-invoke [compute task sync-fn async-fn & [reducer]]
-  (let [{:keys [::async ::name ::timeout ::no-failover]} (-> task meta ::opts)
-        compute ^IgniteCompute (task-compute compute name timeout no-failover)]
+(defn- distributed-invoke [compute task opts sync-fn async-fn]
+  (let [{:keys [:async :name :timeout :no-failover]} opts
+        compute (compute-for-task compute name timeout no-failover)]
     (cond
-      async (->AshtreeFuture (async-fn compute task reducer))
-      :else (sync-fn compute task reducer))))
+      async (->AshtreeFuture (async-fn compute task))
+      :else (sync-fn compute task))))
 
 (defn invoke*
-  "Execute a task on a cluster using compute API instance.
+  "See invoke. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
+  [^IgniteCompute compute task & args+opts]
+  (let [{:keys [args opts]} (apply hash-map args+opts)]
+    ;; push callable to distributed invoke
+    (distributed-invoke compute (callable task args) opts
+      #(.call      ^IgniteCompute %1 ^IgniteCallable %2)
+      #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+
+(defn invoke
+  "Execute a task on a cluster using compute API instance. Uses ignite/*compute* as compute instance.
 
   A task can be one of the following:
   * clojure function       - has to be available on both caller and executing node, should be AOT compiled
@@ -172,53 +156,68 @@
   Returns a function's return value or a future if :async true is passed as one of the options.
   Returned future is an IgniteFuture and can be derefed like standard future.
 
+  (invoke f :args [x1 x2 ...] :opts {:async true})
+
   Args:
-  compute  - compute API instance
-  task     - function to execute
+  task         - task to execute
 
   Optional:
-  args     - arguments to task"
-  [^IgniteCompute compute task & args]
-  (distributed-invoke compute (callable task args) call-fn acall-fn))
+  args+opts    - arguments to task and options, passed as :args args-vector :opts opts-map
 
-(defn invoke
-  "See invoke*. Uses ignite/*compute* as compute instance."
-  [task & args]
-  (apply invoke* ignite/*compute* task args))
+  Options:
+  :async       - enable async execution if true
+  :timeout     - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+  :no-failover - execute with no failover mode if true
+  :name        - name for this task"
+  [task & args+opts]
+  (apply invoke* ignite/*compute* task args+opts))
 
 (defn invoke-seq*
+  "See invoke-seq. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
+  [^IgniteCompute compute tasks & args+opts]
+  (let [{:keys [args opts reduce reduce-init]} (apply hash-map args+opts)
+        tasks (mapv callable tasks (or args (repeat nil)))
+        [sync-fn async-fn]
+        (if reduce
+          [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
+           #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
+          [#(.call      ^IgniteCompute %1 ^Collection %2)
+           #(.callAsync ^IgniteCompute %1 ^Collection %2)])]
+    (distributed-invoke compute tasks opts sync-fn async-fn)))
+
+(defn invoke-seq
   "Executes a seq of tasks on a cluster using compute API instance, splitting them across cluster.
   Returns a collection of results or a future if :async true is passed as one of the options.
 
+  (invoke-seq [f1 f2 ...] :args [vec1 vec2 ...] :opts {:async true} :reducer reducer-foo :reducer-init init-value)
+
   Args:
-  compute - compute API instance
   tasks   - sequence of tasks
 
   Optional:
-  args    - sequence of vectors with arguments to tasks. First vector would be applied to first task and so on.
-            Can be skipped if all task are no-arg. If some tasks are no-arg use nil or empty-vector as their args.
-  reducer - if provided it would be called on the results reducing them into a single value.
-            It should accept 2 arguments (state, x) and should follow the same rules as task.
+  args+opts - arguments to tasks and options, passed as :args vector-of-args-vectors :opts opts-map
+              For args first args vector would be applied to first task, second to second and so on. If a task is a
+              no-arg then it's args can be either nil or [].
+  reducer   - if provided it would be called on the results reducing them into a single value.
+              It should accept 2 arguments (state, x) and should follow the same rules as task.
+  reducer-init - initial state of reducer state
 
-  See invoke* documentation for more details."
-  [^IgniteCompute compute tasks & [args reducer]]
-  (let [tasks (mapv callable tasks (or args (repeat nil)))]
-    (distributed-invoke compute tasks call-coll-fn acall-coll-fn reducer)))
-
-(defn invoke-seq
-  "See invoke-seq*. Uses ignite/*compute* as compute instance."
-  [tasks & [args reducer]]
-  (invoke-seq* ignite/*compute* tasks args reducer))
+  See invoke documentation for more details about tasks and options."
+  [tasks & args+opts]
+  (apply invoke-seq* ignite/*compute* tasks args+opts))
 
 (defn broadcast*
-  "Execute a task on all nodes in a cluster.
-  Returns a collection of results or a future if :async true is passed as one of the options.
-
-  See invoke documentation for more details."
-  [^IgniteCompute compute task & args]
-  (distributed-invoke compute (callable task args) broadcast-fn abroadcast-fn))
+  "See broadcast. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
+  [^IgniteCompute compute task & args+opts]
+  (let [{:keys [args opts]} (apply hash-map args+opts)]
+    (distributed-invoke compute (callable task args) opts
+      #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
+      #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
 
 (defn broadcast
-  "See broadcast*. Uses ignite/*compute* as compute instance."
-  [task & args]
-  (apply broadcast* ignite/*compute* task args))
+  "Execute a task on all nodes in a cluster. Uses ignite/*compute* as compute instance.
+  Returns a collection of results or a future if :async true is passed as one of the options.
+
+  See invoke documentation for more details about tasks and options."
+  [task & args+opts]
+  (apply broadcast* ignite/*compute* task args+opts))
