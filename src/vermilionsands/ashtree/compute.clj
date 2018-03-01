@@ -228,9 +228,9 @@
               no-arg then it's args can be either nil or [].
 
   Additional options:
-  reduce      - if provided it would be called on the results reducing them into a single value.
+  :reduce      - if provided it would be called on the results reducing them into a single value.
                 It should accept 2 arguments (state, x) and should follow the same rules as task.
-  reduce-init - initial state of reducer state
+  :reduce-init - initial state of reducer state
 
   See invoke documentation for more details about tasks and options. invoke-seq does not support affinity."
   [tasks & args+opts]
