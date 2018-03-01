@@ -158,7 +158,7 @@ For all functions:
 * `:name` - name for this task
 
 For `invoke`/`invoke*`
-* `:affinity-cache` - cache name(s) for [affinity call](https://apacheignite.readme.io/docs/affinity-collocation)
+* `:affinity-cache` - cache name(s) for [affinity call](https://apacheignite.readme.io/docs/collocate-compute-and-data)
 * `:affinity-key` - affinity key or partition id
  
 For `invoke-seq`/`invoke-seq*`
