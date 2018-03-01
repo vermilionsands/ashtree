@@ -72,7 +72,7 @@
     (fn [& args]
       (let [f ((or *callable-eval* eval) form)]
         (apply f args)))
-    {::opts (-> form meta ::opts)}))
+    (meta form)))
 
 (defn symbol-fn
   "Returns a function that tries to resolve a symbol sym to a var and calls it with supplied args.
@@ -87,7 +87,7 @@
         (when-not f-var
           (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
         (apply @f-var args)))
-    {::opts (-> sym meta ::opts)}))
+    (meta sym)))
 
 (defn- callable? [task]
   (instance? IgniteCallable task))
@@ -113,6 +113,13 @@
   (instance? IgniteReducer task))
 
 (defn reducer
+  "Create an IgniteReucer instance for a task. See callable for acceptable tasks.
+
+  Args:
+  task - underlying function should accept two arguments - accumulator and x
+
+  Optional:
+  init-value - initial value for state, otherwise state would be set to nil"
   [task & [init-value]]
   (let [state (atom init-value)]
     (cond
