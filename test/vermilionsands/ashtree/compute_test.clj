@@ -7,8 +7,8 @@
             [vermilionsands.ashtree.test-helpers :as test-helpers :refer [to-upper-case]])
   (:import [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException]
-           [org.apache.ignite.lang IgniteFuture]
-           (org.apache.ignite Ignite IgniteCache)))
+           [org.apache.ignite Ignite IgniteCache]
+           [org.apache.ignite.lang IgniteFuture]))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
