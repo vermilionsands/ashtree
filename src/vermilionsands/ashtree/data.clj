@@ -21,7 +21,10 @@
     "Removes shared watch under key k.")
 
   (get-shared-watches [this]
-    "Returns shared watches for this atom."))
+    "Returns shared watches for this atom.")
+
+  (destroy [this]
+    "Destroys this atom's shared state objects."))
 
 (defn- validate
   "Executes f on x and throws an exception if result is false, or rethrows an exception.
@@ -149,10 +152,18 @@
   (get-shared-watches [_]
     (:watches (.get shared-ctx)))
 
+  (destroy [this]
+    (.close this)
+    (.close ^IgniteAtomicReference shared-ctx)
+    (.close ^IgniteAtomicReference state))
+
   Closeable
   (close [_]
-    (.close ^IgniteAtomicReference shared-ctx)
-    (.close ^IgniteAtomicReference state)))
+    (when-let [listener (:listener @local-ctx)]
+      (.stopLocalListen
+        ^IgniteMessaging messaging
+        (:notification-topic (.get ^IgniteAtomicReference shared-ctx))
+        listener))))
 
 (defn- notify
   [^IgniteAtom ignite-atom old-val new-val]
@@ -212,18 +223,17 @@
         (.unlock lock)))))
 
 (defn- add-listener! [^IgniteAtom ignite-atom]
-  (let [listener-id
-        (.localListen
-          ^IgniteMessaging (.-messaging ignite-atom)
-          (:notification-topic (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom)))
-          (reify IgniteBiPredicate
-            (apply [_ _ message]
-              (let [[old-val new-val] message]
-                (doseq [[k f] (concat (.getWatches ignite-atom) (get-shared-watches ignite-atom))]
-                  (when f
-                    (f k ignite-atom old-val new-val)))
-                true))))]
-    (swap! (.-local_ctx ignite-atom) assoc :listener listener-id)
+  (let [listener
+        (reify IgniteBiPredicate
+          (apply [_ _ message]
+            (let [[old-val new-val] message]
+              (doseq [[k f] (concat (.getWatches ignite-atom) (get-shared-watches ignite-atom))]
+                (when f
+                  (f k ignite-atom old-val new-val)))
+              true)))
+        topic (:notification-topic (.get ^IgniteAtomicReference (.-shared_ctx ignite-atom)))]
+    (.localListen ^IgniteMessaging (.-messaging ignite-atom) topic listener)
+    (swap! (.-local_ctx ignite-atom) assoc :listener listener)
     ignite-atom))
 
 (defn distributed-atom
@@ -260,7 +270,13 @@
     ignite-atom))
 
 (defn close!
-  "Closes a distributed atom, closing/destroying underlying distributed state objects.
+  "'Soft' closes a distributed atom, removing notficiation listener, but not destroying it's distributed state objects.
   Returns nil."
   [^IgniteAtom ignite-atom]
   (.close ignite-atom))
+
+(defn destroy!
+  "Closes a distributed atom, closing/destroying underlying distributed state objects.
+  Returns nil."
+  [^IgniteAtom ignite-atom]
+  (.destroy ignite-atom))
