@@ -164,6 +164,8 @@
   Returned future is an IgniteFuture and can be derefed like standard future.
 
   (invoke f :args [x1 x2 ...] :opts {:async true})
+  (invoke 'fully.qualified/symbol :args [x1 x2 ...] :opts {:timeout 1})
+  (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
 
   Args:
   task         - task to execute
@@ -224,6 +226,8 @@
 (defn broadcast
   "Execute a task on all nodes in a cluster. Uses ignite/*compute* as compute instance.
   Returns a collection of results or a future if :async true is passed as one of the options.
+
+  (broadcast f :args [x1 x2] :opts {:async true})
 
   See invoke documentation for more details about tasks and options."
   [task & args+opts]
