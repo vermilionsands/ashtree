@@ -2,23 +2,20 @@
 
 Playing with Apache Ignite in Clojure. 
 
-## Usage
+## Features
 
 Caveat emptor! This is work in progress.
 
 ### Distributed tasks
 
-...
+`vermilionsands.ashtree.compute` contains some helpers to work with Ignite's 
+[compute grid & distributed closures](https://apacheignite.readme.io/docs/distributed-closures). 
 
-### Distributed atom
-
-`vermilionsands.ashtree.data` contains an atom-like reference type, that uses Ignite to store it's state in a 
-distributed fashion.
+Right now only a part of the API is implemented. 
 
 #### Sample usage
 
-In REPL:
-
+Start Ignite in REPL:
 ```clj
 ;; Create ignite instance
 (import '[org.apache.ignite Ignition Ignite IgniteCompute])
@@ -32,6 +29,41 @@ In REPL:
       (.setAtomicConfiguration
       (doto (AtomicConfiguration.)
         (.setCacheMode CacheMode/REPLICATED))))))
+            
+;; define a function, normally this should be AOT-compiled but we can use a workaround
+(defn hello! [x] (println "Hello" x "from Ignite!") :ok)        
+```
+Repeat the above in a different REPL (different JVM instance). 
+
+In one of the REPLs:
+```clj         
+(require '[vermilionsands.ashtree.ignite :as ignite])  
+(require '[vermilionsands.ashtree.compute :as compute])
+
+;; broadcast a function to all nodes
+(ignite/with-compute (ignite/compute ignite)
+  (compute/broadcast 'user/hello! :args ["Stranger"])) 
+```
+
+You should see a printed string on both REPLs and a vector `[:ok :ok]` as a function
+result on the calling one. 
+
+#### Details
+
+...
+
+### Distributed atom
+
+`vermilionsands.ashtree.data` contains an atom-like reference type, that uses Ignite to store it's state in a 
+distributed fashion.
+
+#### Sample usage
+
+In REPL:
+
+```clj
+;; Create Ignite instance first, see example for distributed task for example.
+;; After that:
 
 ;; Create atom
 (require '[vermilionsands.ashtree.data :as data])
