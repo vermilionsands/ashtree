@@ -6,8 +6,7 @@
             [vermilionsands.ashtree.ignite :as i])
   (:import [org.apache.ignite Ignition Ignite IgniteCompute]
            [org.apache.ignite.cache CacheMode]
-           [org.apache.ignite.configuration IgniteConfiguration AtomicConfiguration]
-           [org.apache.ignite.lang IgniteRunnable IgniteCallable]))
+           [org.apache.ignite.configuration IgniteConfiguration AtomicConfiguration]))
 
 (defonce ^:dynamic *ignite* nil)
 (defonce ^:dynamic *compute* nil)
