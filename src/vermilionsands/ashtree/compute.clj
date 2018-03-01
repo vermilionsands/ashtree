@@ -145,11 +145,25 @@
 (defn invoke*
   "See invoke. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
   [^IgniteCompute compute task & args+opts]
-  (let [{:keys [args opts]} (apply hash-map args+opts)]
+  (let [{:keys [args opts]} (apply hash-map args+opts)
+        {:keys [affinity-cache affinity-key]} opts
+        opts (dissoc opts :affinity-name :affinity-key)
+        [sync-fn async-fn]
+        (if-not affinity-cache
+          [#(.call      ^IgniteCompute %1 ^IgniteCallable %2)
+           #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2)]
+          (cond
+            (and (coll? affinity-cache) (number? affinity-key))
+            [#(.affinityCall      ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)
+             #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)]
+            (coll? affinity-cache)
+            [#(.affinityCall      ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)
+             #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)]
+            :else
+            [#(.affinityCall      ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
+             #(.affinityCallAsync ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)]))]
     ;; push callable to distributed invoke
-    (distributed-invoke compute (callable task args) opts
-      #(.call      ^IgniteCompute %1 ^IgniteCallable %2)
-      #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+    (distributed-invoke compute (callable task args) opts sync-fn async-fn)))
 
 (defn invoke
   "Execute a task on a cluster using compute API instance. Uses ignite/*compute* as compute instance.
@@ -168,25 +182,30 @@
   (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
 
   Args:
-  task         - task to execute
+  task - task to execute
 
   Optional:
-  args+opts    - arguments to task and options, passed as :args args-vector :opts opts-map
+  args+opts - arguments to task and options, passed as :args args-vector :opts opts-map
 
   Options:
-  :async       - enable async execution if true
-  :timeout     - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
-  :no-failover - execute with no failover mode if true
-  :name        - name for this task"
+  :async          - enable async execution if true
+  :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+  :no-failover    - execute with no failover mode if true
+  :name           - name for this task
+  :affinity-cache - cache name(s) for affinity call
+  :affinity-key   - affinity key or partition id"
   [task & args+opts]
   (apply invoke* ignite/*compute* task args+opts))
 
 (defn invoke-seq*
   "See invoke-seq. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
   [^IgniteCompute compute tasks & args+opts]
-  (let [{:keys [args opts reduce reduce-init]} (apply hash-map args+opts)
+  (let [{:keys [args opts]} (apply hash-map args+opts)
+        {:keys [reduce reduce-init]} opts
+        opts (dissoc opts :reduce :reduce-init)
         tasks (mapv callable tasks (or args (repeat nil)))
         [sync-fn async-fn]
+
         (if reduce
           [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
            #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
@@ -201,17 +220,19 @@
   (invoke-seq [f1 f2 ...] :args [vec1 vec2 ...] :opts {:async true} :reducer reducer-foo :reducer-init init-value)
 
   Args:
-  tasks   - sequence of tasks
+  tasks - sequence of tasks
 
   Optional:
   args+opts - arguments to tasks and options, passed as :args vector-of-args-vectors :opts opts-map
               For args first args vector would be applied to first task, second to second and so on. If a task is a
               no-arg then it's args can be either nil or [].
-  reducer   - if provided it would be called on the results reducing them into a single value.
-              It should accept 2 arguments (state, x) and should follow the same rules as task.
-  reducer-init - initial state of reducer state
 
-  See invoke documentation for more details about tasks and options."
+  Additional options:
+  reduce      - if provided it would be called on the results reducing them into a single value.
+                It should accept 2 arguments (state, x) and should follow the same rules as task.
+  reduce-init - initial state of reducer state
+
+  See invoke documentation for more details about tasks and options. invoke-seq does not support affinity."
   [tasks & args+opts]
   (apply invoke-seq* ignite/*compute* tasks args+opts))
 
@@ -229,6 +250,6 @@
 
   (broadcast f :args [x1 x2] :opts {:async true})
 
-  See invoke documentation for more details about tasks and options."
+  See invoke documentation for more details about tasks and options. broadcast does not support affinity."
   [task & args+opts]
   (apply broadcast* ignite/*compute* task args+opts))

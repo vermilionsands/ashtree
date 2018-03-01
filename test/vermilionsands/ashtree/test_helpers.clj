@@ -1,6 +1,6 @@
 (ns vermilionsands.ashtree.test-helpers
   (:require [clojure.string :as string])
-  (:import [org.apache.ignite Ignite])
+  (:import [org.apache.ignite Ignite IgniteCache])
   (:gen-class))
 
 (defn less-than-10 [x]
@@ -30,11 +30,13 @@
 (defn get-node-id [^Ignite ignite]
   (.id (.localNode (.cluster ignite))))
 
-(defn inc-node-state
-  [^Ignite ignite]
+(defn inc-node-state [^Ignite ignite]
   (let [local-node-map (.nodeLocalMap (.cluster ignite))
         v (.get local-node-map "counter")
         counter-atom (or v (atom 0))]
     (when-not v
       (.putIfAbsent local-node-map "counter" counter-atom))
     (swap! counter-atom inc)))
+
+(defn cache-peek [^IgniteCache cache key]
+  (.localPeek cache key nil))

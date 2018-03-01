@@ -7,7 +7,8 @@
             [vermilionsands.ashtree.test-helpers :as test-helpers :refer [to-upper-case]])
   (:import [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException]
-           [org.apache.ignite.lang IgniteFuture]))
+           [org.apache.ignite.lang IgniteFuture]
+           (org.apache.ignite Ignite IgniteCache)))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
@@ -86,7 +87,17 @@
   (ignite/with-compute (compute)
     (testing "Reducer without init value"
       (is (#{"RAGNAROK" "ROKRAGNA"} ;; there is no ordering guarantee
-            (invoke-seq (repeat 2 to-upper-case) :args [["RAGNA"] ["ROK"]] :reduce str))))
+            (invoke-seq (repeat 2 to-upper-case) :args [["RAGNA"] ["ROK"]] :opts {:reduce str}))))
     (testing "Reducer with init value"
       (is (= 7
-             (invoke-seq (repeat 2 (partial * 2)) :args [[1] [2]] :reduce + :reduce-init 1))))))
+             (invoke-seq (repeat 2 (partial * 2)) :args [[1] [2]] :opts {:reduce + :reduce-init 1}))))))
+
+(deftest affinity-test
+  (let [cache (.getOrCreateCache ^Ignite *ignite-instance* "affinity-test")]
+    (.put ^IgniteCache cache :test-key "test-val")
+    (ignite/with-compute (compute)
+      (is (every? #(= % "test-val")
+                  (for [_ (range 10)]
+                    (invoke test-helpers/cache-peek
+                      :args [cache :test-key]
+                      :opts {:affinity-cache "affinity-test" :affinity-key :test-key})))))))
