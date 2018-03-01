@@ -96,8 +96,16 @@
   (let [cache (.getOrCreateCache ^Ignite *ignite-instance* "affinity-test")]
     (.put ^IgniteCache cache :test-key "test-val")
     (ignite/with-compute (compute)
-      (is (every? #(= % "test-val")
-                  (for [_ (range 10)]
-                    (invoke test-helpers/cache-peek
-                      :args [cache :test-key]
-                      :opts {:affinity-cache "affinity-test" :affinity-key :test-key})))))))
+      (testing "Sync affinity call"
+        (is (every? #(= % "test-val")
+                    (for [_ (range 10)]
+                      (invoke test-helpers/cache-peek
+                        :args [cache :test-key]
+                        :opts {:affinity-cache "affinity-test" :affinity-key :test-key})))))
+      (testing "Async affinity call"
+        (is (every? #(= % "test-val")
+                    (map deref
+                      (for [_ (range 10)]
+                        (invoke test-helpers/cache-peek
+                                :args [cache :test-key]
+                                :opts {:async true :affinity-cache "affinity-test" :affinity-key :test-key})))))))))
