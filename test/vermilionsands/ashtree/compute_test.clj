@@ -29,6 +29,9 @@
       (is (= "ODIN" (invoke (partial test-helpers/to-upper-case "Odin")))))
     (testing "invoke using symbol"
       (is (= "ODIN" (invoke 'vermilionsands.ashtree.test-helpers/to-upper-case :args ["Odin"]))))
+    ; works in practice, fails in test
+    #_(testing "invoke using unqualified symbol"
+        (is (= "ODIN" (invoke 'to-upper-case :args ["Odin"]))))
     (testing "invoke using serializable function"
       (is (= "ODIN" (invoke (sfn [s] (.toUpperCase s)) :args ["Odin"]))))
     (testing "invoke with async flag and normal function"
@@ -76,7 +79,7 @@
 
 (deftest per-node-shared-state-test
   ;; call 3 times on 2 nodes - 1 would be called 2 times, one 1 time
-  ;; ??? flickers sometimes when other tests fail?
+  ;; flickers sometimes when other tests fail
   (is (= #{1 2}
          (set
            (compute/invoke-seq*
