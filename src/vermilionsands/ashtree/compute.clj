@@ -8,13 +8,17 @@
            [org.apache.ignite IgniteCompute Ignite])
   (:gen-class))
 
+(def ^:dynamic *compute*
+  "Compute API instance to be used with with-compute"
+  nil)
+
 (def ^:dynamic *callable-eval*
   "Eval function that would be used by IgniteCallable wrapper for serializable functions.
 
   By default it would keep 100 elements using LRU memoization."
   (memoize/lru eval :lru/threshold 100))
 
-(deftype IgniteFn [f args]
+(deftype AshtreeCallable [f args]
   IgniteCallable
   (call [_]
     (apply f args))
@@ -22,7 +26,7 @@
   IMeta
   (meta [_] (meta f)))
 
-(deftype IgniteReducerFn [f state]
+(deftype AshtreeReducer [f state]
    IgniteReducer
    (collect [_ x]
      (swap! state f x)
@@ -109,16 +113,16 @@
   [task args]
   (cond
     (callable? task)              task
-    (function/serializable? task) (->IgniteFn (eval-fn (function/eval-form task)) args)
-    (symbol? task)                (->IgniteFn (symbol-fn task) args)
-    (fn? task)                    (->IgniteFn task args)
+    (function/serializable? task) (->AshtreeCallable (eval-fn (function/eval-form task)) args)
+    (symbol? task)                (->AshtreeCallable (symbol-fn task) args)
+    (fn? task)                    (->AshtreeCallable task args)
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
 
 (defn- reducer? [task]
   (instance? IgniteReducer task))
 
 (defn reducer
-  "Create an IgniteReucer instance for a task. See callable for acceptable tasks.
+  "Create an IgniteReducer instance for a task. See callable for acceptable tasks.
 
   Args:
   task - underlying function should accept two arguments - accumulator and x
@@ -129,9 +133,9 @@
   (let [state (atom init-value)]
     (cond
       (reducer? task)               task
-      (function/serializable? task) (->IgniteReducerFn (eval-fn (function/eval-form task)) state)
-      (symbol? task)                (->IgniteReducerFn (symbol-fn task) state)
-      (fn? task)                    (->IgniteReducerFn task state)
+      (function/serializable? task) (->AshtreeReducer (eval-fn (function/eval-form task)) state)
+      (symbol? task)                (->AshtreeReducer (symbol-fn task) state)
+      (fn? task)                    (->AshtreeReducer task state)
       :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteReducer from %s" task))))))
 
 (defn- compute-for-task [compute name timeout no-failover]
@@ -143,7 +147,7 @@
 (defn- distributed-invoke [compute task opts sync-fn async-fn]
   (let [{:keys [:async :name :timeout :no-failover]} opts
         compute (some->
-                  (or compute ignite/*compute*)
+                  (or compute *compute*)
                   (compute-for-task name timeout no-failover))]
     (when-not compute
       (throw (IllegalArgumentException. "No compute API instance!")))
@@ -247,3 +251,9 @@
     (distributed-invoke compute (callable task args) opts
       #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
       #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+
+(defmacro with-compute
+  "Evaluates body in a context in which *compute* is bound to a given compute API instance"
+  [compute & body]
+  `(binding [*compute* ~compute]
+     ~@body))

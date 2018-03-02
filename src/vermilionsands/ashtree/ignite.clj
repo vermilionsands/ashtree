@@ -3,8 +3,6 @@
            [org.apache.ignite Ignite IgniteCompute]
            [org.apache.ignite.cluster ClusterGroup]))
 
-(def ^:dynamic *compute* "Compute API instance to be used with with-compute" nil)
-
 (defn ^IgniteCompute compute
   "Get an instance of compute API.
 
@@ -27,12 +25,6 @@
     (cond-> compute
       async    (.withAsync)
       executor (.withExecutor executor))))
-
-(defmacro with-compute
-  "Evaluates body in a context in which *compute* is bound to a given compute API instance"
-  [compute & body]
-  `(binding [*compute* ~compute]
-     ~@body))
 
 (defn ^ExecutorService executor-service
   "Get a distributed executor service from Ignite instance

@@ -1,6 +1,6 @@
 (ns vermilionsands.ashtree.compute-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [vermilionsands.ashtree.compute :as compute :refer [invoke invoke-seq broadcast]]
+            [vermilionsands.ashtree.compute :as compute :refer [invoke invoke-seq broadcast with-compute]]
             [vermilionsands.ashtree.fixtures :as fixtures :refer [*ignite-instance*]]
             [vermilionsands.ashtree.function :as function :refer [sfn]]
             [vermilionsands.ashtree.ignite :as ignite]
@@ -16,13 +16,13 @@
   (ignite/compute *ignite-instance*))
 
 (deftest with-compute-test
-  (ignite/with-compute (compute)
+  (with-compute (compute)
     (is (= "ODIN" (invoke to-upper-case :args ["Odin"])))
     (is (= #{"ODIN" "THOR"} (set (invoke-seq [to-upper-case to-upper-case] :args [["Odin"] ["Thor"]]))))
     (is (= ["ODIN" "ODIN"] (broadcast to-upper-case :args ["Odin"])))))
 
 (deftest invoke-test
-  (ignite/with-compute (compute)
+  (with-compute (compute)
     (testing "invoke using function"
       (is (= "ODIN" (invoke to-upper-case :args ["Odin"]))))
     (testing "invoke using partial no-arg function"
@@ -43,7 +43,7 @@
             (invoke (sfn [] (Thread/sleep 100) :ok) :opts {:timeout 1}))))))
 
 (deftest invoke-seq-test
-  (ignite/with-compute (compute)
+  (with-compute (compute)
     (testing "invoke-seq with no-arg functions"
       (is (= #{"THOR" "ODIN" "TYR" "LOKI"}
              (set (invoke-seq (map #(partial to-upper-case %) ["Odin" "Thor" "Loki" "Tyr"]))))))
@@ -62,7 +62,7 @@
         (is (= ["FUTURE" "FUTURE"] @result))))))
 
 (deftest broadcast-test
-  (ignite/with-compute (compute)
+  (with-compute (compute)
     (testing "Basic broadcast"
       (is (= ["ECHO" "ECHO"] (broadcast to-upper-case :args ["Echo"]))))
     (testing "Passing Ignite instance to function"
@@ -87,7 +87,7 @@
              :compute (compute))))))
 
 (deftest reducer-test
-  (ignite/with-compute (compute)
+  (with-compute (compute)
     (testing "Reducer without init value"
       (is (#{"RAGNAROK" "ROKRAGNA"} ;; there is no ordering guarantee
             (invoke-seq (repeat 2 to-upper-case) :args [["RAGNA"] ["ROK"]] :opts {:reduce str}))))
@@ -98,7 +98,7 @@
 (deftest affinity-test
   (let [cache (.getOrCreateCache ^Ignite *ignite-instance* "affinity-test")]
     (.put ^IgniteCache cache :test-key "test-val")
-    (ignite/with-compute (compute)
+    (with-compute (compute)
       (testing "Sync affinity call"
         (is (every? #(= % "test-val")
                     (for [_ (range 10)]
