@@ -41,10 +41,10 @@
     (.cancel future))
 
   (chain [_ on-done]
-    (.chain future on-done))
+    (AshtreeFuture. (.chain future on-done)))
 
   (chainAsync [_ on-done exec]
-    (.chainAsync future on-done exec))
+    (AshtreeFuture. (.chainAsync future on-done exec)))
 
   (get [_]
     (.get future))
@@ -78,16 +78,21 @@
   "Returns a function that tries to resolve a symbol sym to a var and calls it with supplied args.
 
   Args:
-  sym  - fully qualified symbol
+  sym  - symbol, if it is not fully qualified symbol-fn would try to resolve it *as is* and create a
+         fully qualified version
   args - optional args that would be applied to resolved function"
   [sym]
-  (with-meta
-    (fn [& args]
-      (let [f-var (resolve sym)]
-        (when-not f-var
-          (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
-        (apply @f-var args)))
-    (meta sym)))
+  (let [{:keys [name ns]} (-> sym resolve meta)
+        sym (if name
+              (symbol (str (ns-name ns)) (str name))
+              sym)]
+    (with-meta
+      (fn [& args]
+        (let [f-var (resolve sym)]
+          (when-not f-var
+            (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
+          (apply @f-var args)))
+      (meta sym))))
 
 (defn- callable? [task]
   (instance? IgniteCallable task))
@@ -149,6 +154,7 @@
         {:keys [affinity-cache affinity-key]} opts
         opts (dissoc opts :affinity-name :affinity-key)
         [sync-fn async-fn]
+        ;; it begs for a rework...
         (if-not affinity-cache
           [#(.call      ^IgniteCompute %1 ^IgniteCallable %2)
            #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2)]
@@ -172,13 +178,15 @@
   * clojure function       - has to be available on both caller and executing node, should be AOT compiled
   * serializable function  - from function namespace. It would be passed as data, and evaled on executing node
                              (this is EXPERIMENTAL!!!)
-  * fully qualified symbol - would be resolved to a function, only has to be valid on executing node
+  * symbol                 - preferably fully qualified, it would be resolved to a function, only has to be valid
+                             on executing node
 
   Returns a function's return value or a future if :async true is passed as one of the options.
   Returned future is an IgniteFuture and can be derefed like standard future.
 
   (invoke f :args [x1 x2 ...] :opts {:async true})
   (invoke 'fully.qualified/symbol :args [x1 x2 ...] :opts {:timeout 1})
+  (invoke 'symbol :args [x1 x2 ...] :opts {:timeout 1}) ;; would try to convert symbol to a fully qualified one
   (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
 
   Args:
@@ -205,7 +213,6 @@
         opts (dissoc opts :reduce :reduce-init)
         tasks (mapv callable tasks (or args (repeat nil)))
         [sync-fn async-fn]
-
         (if reduce
           [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
            #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
