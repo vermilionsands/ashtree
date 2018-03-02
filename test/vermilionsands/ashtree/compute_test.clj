@@ -82,9 +82,9 @@
   ;; flickers sometimes when other tests fail
   (is (= #{1 2}
          (set
-           (compute/invoke-seq*
-             (compute)
-             (repeat 3 (partial test-helpers/inc-node-state *ignite-instance*)))))))
+           (invoke-seq
+             (repeat 3 (partial test-helpers/inc-node-state *ignite-instance*))
+             :compute (compute))))))
 
 (deftest reducer-test
   (ignite/with-compute (compute)

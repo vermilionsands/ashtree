@@ -142,17 +142,49 @@
 
 (defn- distributed-invoke [compute task opts sync-fn async-fn]
   (let [{:keys [:async :name :timeout :no-failover]} opts
-        compute (compute-for-task compute name timeout no-failover)]
+        compute (some->
+                  (or compute ignite/*compute*)
+                  (compute-for-task name timeout no-failover))]
+    (when-not compute
+      (throw (IllegalArgumentException. "No compute API instance!")))
     (cond
       async (->AshtreeFuture (async-fn compute task))
       :else (sync-fn compute task))))
 
-(defn invoke*
-  "See invoke. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
-  [^IgniteCompute compute task & args+opts]
-  (let [{:keys [args opts]} (apply hash-map args+opts)
+(defn invoke
+  "Execute a task on a cluster. By default it uses ignite/*compute* as compute instance.
+
+  A task can be one of the following:
+  * clojure function       - has to be available on both caller and executing node, should be AOT compiled
+  * serializable function  - from function namespace. It would be passed as data, and evaled on executing node
+                             (this is EXPERIMENTAL!!!)
+  * symbol                 - preferably fully qualified, it would be resolved to a function, only has to be valid
+                             on executing node
+
+  Returns a function's return value or a future if :async true is passed as one of the options.
+  Returned future is an IgniteFuture and can be derefed like standard future.
+
+  (invoke f :args [x1 x2 ...] :opts {:async true})
+  (invoke 'fully.qualified/symbol :args [x1 x2 ...] :opts {:timeout 1} :compute some-custom-compute)
+  (invoke 'symbol :args [x1 x2 ...] :opts {:timeout 1}) ;; would try to convert symbol to a fully qualified one
+  (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
+
+  Args:
+  task - task to execute
+
+  Optional:
+  args+opts - arguments to task and options. Supports :args args-vector, :opts opts-map, :compute compute-instance
+
+  Options:
+  :async          - enable async execution if true
+  :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+  :no-failover    - execute with no failover mode if true
+  :name           - name for this task
+  :affinity-cache - cache name(s) for affinity call
+  :affinity-key   - affinity key or partition id"
+  [task & args+opts]
+  (let [{:keys [args opts compute]} (apply hash-map args+opts)
         {:keys [affinity-cache affinity-key]} opts
-        opts (dissoc opts :affinity-name :affinity-key)
         [sync-fn async-fn]
         ;; it begs for a rework...
         (if-not affinity-cache
@@ -171,58 +203,9 @@
     ;; push callable to distributed invoke
     (distributed-invoke compute (callable task args) opts sync-fn async-fn)))
 
-(defn invoke
-  "Execute a task on a cluster using compute API instance. Uses ignite/*compute* as compute instance.
-
-  A task can be one of the following:
-  * clojure function       - has to be available on both caller and executing node, should be AOT compiled
-  * serializable function  - from function namespace. It would be passed as data, and evaled on executing node
-                             (this is EXPERIMENTAL!!!)
-  * symbol                 - preferably fully qualified, it would be resolved to a function, only has to be valid
-                             on executing node
-
-  Returns a function's return value or a future if :async true is passed as one of the options.
-  Returned future is an IgniteFuture and can be derefed like standard future.
-
-  (invoke f :args [x1 x2 ...] :opts {:async true})
-  (invoke 'fully.qualified/symbol :args [x1 x2 ...] :opts {:timeout 1})
-  (invoke 'symbol :args [x1 x2 ...] :opts {:timeout 1}) ;; would try to convert symbol to a fully qualified one
-  (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
-
-  Args:
-  task - task to execute
-
-  Optional:
-  args+opts - arguments to task and options, passed as :args args-vector :opts opts-map
-
-  Options:
-  :async          - enable async execution if true
-  :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
-  :no-failover    - execute with no failover mode if true
-  :name           - name for this task
-  :affinity-cache - cache name(s) for affinity call
-  :affinity-key   - affinity key or partition id"
-  [task & args+opts]
-  (apply invoke* ignite/*compute* task args+opts))
-
-(defn invoke-seq*
-  "See invoke-seq. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
-  [^IgniteCompute compute tasks & args+opts]
-  (let [{:keys [args opts]} (apply hash-map args+opts)
-        {:keys [reduce reduce-init]} opts
-        opts (dissoc opts :reduce :reduce-init)
-        tasks (mapv callable tasks (or args (repeat nil)))
-        [sync-fn async-fn]
-        (if reduce
-          [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
-           #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
-          [#(.call      ^IgniteCompute %1 ^Collection %2)
-           #(.callAsync ^IgniteCompute %1 ^Collection %2)])]
-    (distributed-invoke compute tasks opts sync-fn async-fn)))
-
 (defn invoke-seq
-  "Executes a seq of tasks on a cluster using compute API instance, splitting them across cluster.
-  Returns a collection of results or a future if :async true is passed as one of the options.
+  "Executes a seq of tasks on a cluster, splitting them across cluster. By default it uses ignite/*compute* as compute
+  instance. Returns a collection of results or a future if :async true is passed as one of the options.
 
   (invoke-seq [f1 f2 ...] :args [vec1 vec2 ...] :opts {:async true} :reducer reducer-foo :reducer-init init-value)
 
@@ -230,7 +213,7 @@
   tasks - sequence of tasks
 
   Optional:
-  args+opts - arguments to tasks and options, passed as :args vector-of-args-vectors :opts opts-map
+  args+opts - arguments to tasks and options. See invoke for details. Args should be passed as :args vector-of-args-vectors
               For args first args vector would be applied to first task, second to second and so on. If a task is a
               no-arg then it's args can be either nil or [].
 
@@ -241,22 +224,26 @@
 
   See invoke documentation for more details about tasks and options. invoke-seq does not support affinity."
   [tasks & args+opts]
-  (apply invoke-seq* ignite/*compute* tasks args+opts))
-
-(defn broadcast*
-  "See broadcast. Accepts compute api instance as it's first argument instead of using ignite/*compute*."
-  [^IgniteCompute compute task & args+opts]
-  (let [{:keys [args opts]} (apply hash-map args+opts)]
-    (distributed-invoke compute (callable task args) opts
-      #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
-      #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+  (let [{:keys [args opts compute]} (apply hash-map args+opts)
+        {:keys [reduce reduce-init]} opts
+        tasks (mapv callable tasks (or args (repeat nil)))
+        [sync-fn async-fn]
+        (if reduce
+          [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
+           #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
+          [#(.call      ^IgniteCompute %1 ^Collection %2)
+           #(.callAsync ^IgniteCompute %1 ^Collection %2)])]
+    (distributed-invoke compute tasks opts sync-fn async-fn)))
 
 (defn broadcast
-  "Execute a task on all nodes in a cluster. Uses ignite/*compute* as compute instance.
+  "Execute a task on all nodes in a cluster. By default it uses ignite/*compute* as compute instance.
   Returns a collection of results or a future if :async true is passed as one of the options.
 
   (broadcast f :args [x1 x2] :opts {:async true})
 
   See invoke documentation for more details about tasks and options. broadcast does not support affinity."
   [task & args+opts]
-  (apply broadcast* ignite/*compute* task args+opts))
+  (let [{:keys [args opts compute]} (apply hash-map args+opts)]
+    (distributed-invoke compute (callable task args) opts
+      #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
+      #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
