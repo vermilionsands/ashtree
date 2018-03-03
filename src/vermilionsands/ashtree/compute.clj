@@ -2,10 +2,11 @@
   (:require [clojure.core.memoize :as memoize]
             [vermilionsands.ashtree.function :as function]
             [vermilionsands.ashtree.ignite :as ignite])
-  (:import [clojure.lang IDeref IMeta]
+  (:import [clojure.lang IDeref IMeta IBlockingDeref IPending]
            [java.util Collection]
-           [org.apache.ignite.lang IgniteCallable IgniteFuture IgniteReducer]
-           [org.apache.ignite IgniteCompute Ignite])
+           [java.util.concurrent TimeUnit TimeoutException]
+           [org.apache.ignite IgniteCompute Ignite]
+           [org.apache.ignite.lang IgniteCallable IgniteFuture IgniteReducer])
   (:gen-class))
 
 (def ^:dynamic *compute*
@@ -39,6 +40,16 @@
   IDeref
   (deref [_]
     (.get future))
+
+  IBlockingDeref
+  (deref [_ timeout-ms timeout-val]
+    (try
+      (.get future timeout-ms TimeUnit/MILLISECONDS)
+      (catch TimeoutException _ timeout-val)))
+
+  IPending
+  (isRealized [_]
+    (.isDone future))
 
   IgniteFuture
   (cancel [_]
@@ -162,7 +173,7 @@
   * clojure function       - has to be available on both caller and executing node, should be AOT compiled
   * serializable function  - from function namespace. It would be passed as data, and evaled on executing node
                              (this is EXPERIMENTAL!!!)
-  * symbol                 - preferably fully qualified, it would be resolved to a function, only has to be valid
+  * symbol                 - preferably fully qualified, it would be resolved to a function. Only has to be valid
                              on executing node
 
   Returns a function's return value or a future if :async true is passed as one of the options.
@@ -251,6 +262,19 @@
     (distributed-invoke compute (callable task args) opts
       #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
       #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+
+(defn distribute
+  "Returns a function which, when called, would be executed in a distributed fashion."
+  [task & opts]
+  (let [{:keys [opts compute]} opts
+        compute (or compute *compute*)]
+    (with-meta
+      (fn [& args] (invoke task :args args :opts opts :compute compute))
+      (merge
+        (meta task)
+        {::f task
+         ::opts opts
+         ::compute compute}))))
 
 (defmacro with-compute
   "Evaluates body in a context in which *compute* is bound to a given compute API instance"
