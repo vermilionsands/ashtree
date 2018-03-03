@@ -155,16 +155,57 @@
     no-failover (.withNoFailover)
     name        (.withName name)))
 
-(defn- distributed-invoke [compute task opts sync-fn async-fn]
-  (let [{:keys [:async :name :timeout :no-failover]} opts
+(defn- parse-args [task opts-seq]
+  (let [xs (cons :tasks (cons task opts-seq))
+        xf (comp (partition-by keyword?) (partition-all 2) (map #(apply concat %)))]
+    (reduce (fn [m [k & v]] (assoc m k (vec v))) {} (sequence xf xs))))
+
+(defn- validate-opts [opts-map]
+  (let [{:keys [tasks args]} opts-map]
+    (when-not (or (= (count tasks) (count args))
+                  (empty? args))
+      (throw (IllegalArgumentException.
+               (format "Count of tasks (%s) does not match with count of args vectors (%s)"
+                       (count tasks) (count args)))))))
+
+(defn- compute-method [{:keys [tasks async broadcast affinity-cache affinity-key reduce reduce-init]}]
+  (let [[_ multiple?] tasks
+        caches? (coll? affinity-cache)
+        part-id? (and caches? (number? affinity-key))
+        aff? affinity-cache]
+    (cond
+      async
+      (cond
+        broadcast #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2)
+        reduce    #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
+        multiple? #(.callAsync ^IgniteCompute %1 ^Collection %2)
+        part-id?  #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)
+        caches?   #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)
+        aff?      #(.affinityCallAsync ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
+        :else     #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2))
+
+      :else
+      (cond
+        broadcast #(.broadcast ^IgniteCompute %1 ^IgniteCallable %2)
+        reduce    #(.call ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
+        multiple? #(.call ^IgniteCompute %1 ^Collection %2)
+        part-id?  #(.affinityCall ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)
+        caches?   #(.affinityCall ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)
+        aff?      #(.affinityCall ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
+        :else     #(.call ^IgniteCompute %1 ^IgniteCallable %2)))))
+
+(defn invoke-map [opts-map]
+  (let [{:keys [tasks args compute async name timeout no-failover]} opts-map
+        _ (validate-opts opts-map)
+        callable (cond->
+                   (mapv callable tasks (or args (repeat nil)))
+                   (nil? (second tasks)) first)
         compute (some->
                   (or compute *compute*)
-                  (compute-for-task name timeout no-failover))]
-    (when-not compute
-      (throw (IllegalArgumentException. "No compute API instance!")))
-    (cond
-      async (->AshtreeFuture (async-fn compute task))
-      :else (sync-fn compute task))))
+                  (compute-for-task name timeout no-failover))
+        f (compute-method opts-map)]
+    (when-not compute (throw (IllegalArgumentException. "No compute API instance!")))
+    (cond-> (f compute callable) async (->AshtreeFuture))))
 
 (defn invoke
   "Execute a task on a cluster. By default it uses ignite/*compute* as compute instance.
@@ -179,102 +220,49 @@
   Returns a function's return value or a future if :async true is passed as one of the options.
   Returned future is an IgniteFuture and can be derefed like standard future.
 
-  (invoke f :args [x1 x2 ...] :opts {:async true})
-  (invoke 'fully.qualified/symbol :args [x1 x2 ...] :opts {:timeout 1} :compute some-custom-compute)
-  (invoke 'symbol :args [x1 x2 ...] :opts {:timeout 1}) ;; would try to convert symbol to a fully qualified one
-  (invoke (functions/sfn [x y] (+ x y)) :args [1 2])
+  <fix samples and rest>
 
   Args:
   task - task to execute
 
   Optional:
-  args+opts - arguments to task and options. Supports :args args-vector, :opts opts-map, :compute compute-instance
+  task+args+opts - arguments to task and options.
 
   Options:
+  :args
+  :broadcast
+  :compute
   :async          - enable async execution if true
   :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
   :no-failover    - execute with no failover mode if true
   :name           - name for this task
   :affinity-cache - cache name(s) for affinity call
-  :affinity-key   - affinity key or partition id"
-  [task & args+opts]
-  (let [{:keys [args opts compute]} (apply hash-map args+opts)
-        {:keys [affinity-cache affinity-key]} opts
-        [sync-fn async-fn]
-        ;; it begs for a rework...
-        (if-not affinity-cache
-          [#(.call      ^IgniteCompute %1 ^IgniteCallable %2)
-           #(.callAsync ^IgniteCompute %1 ^IgniteCallable %2)]
-          (cond
-            (and (coll? affinity-cache) (number? affinity-key))
-            [#(.affinityCall      ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)
-             #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)]
-            (coll? affinity-cache)
-            [#(.affinityCall      ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)
-             #(.affinityCallAsync ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)]
-            :else
-            [#(.affinityCall      ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
-             #(.affinityCallAsync ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)]))]
-    ;; push callable to distributed invoke
-    (distributed-invoke compute (callable task args) opts sync-fn async-fn)))
-
-(defn invoke-seq
-  "Executes a seq of tasks on a cluster, splitting them across cluster. By default it uses ignite/*compute* as compute
-  instance. Returns a collection of results or a future if :async true is passed as one of the options.
-
-  (invoke-seq [f1 f2 ...] :args [vec1 vec2 ...] :opts {:async true} :reducer reducer-foo :reducer-init init-value)
-
-  Args:
-  tasks - sequence of tasks
-
-  Optional:
-  args+opts - arguments to tasks and options. See invoke for details. Args should be passed as :args vector-of-args-vectors
-              For args first args vector would be applied to first task, second to second and so on. If a task is a
-              no-arg then it's args can be either nil or [].
-
-  Additional options:
-  :reduce      - if provided it would be called on the results reducing them into a single value.
-                It should accept 2 arguments (state, x) and should follow the same rules as task.
-  :reduce-init - initial state of reducer state
-
-  See invoke documentation for more details about tasks and options. invoke-seq does not support affinity."
-  [tasks & args+opts]
-  (let [{:keys [args opts compute]} (apply hash-map args+opts)
-        {:keys [reduce reduce-init]} opts
-        tasks (mapv callable tasks (or args (repeat nil)))
-        [sync-fn async-fn]
-        (if reduce
-          [#(.call      ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
-           #(.callAsync ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))]
-          [#(.call      ^IgniteCompute %1 ^Collection %2)
-           #(.callAsync ^IgniteCompute %1 ^Collection %2)])]
-    (distributed-invoke compute tasks opts sync-fn async-fn)))
-
-(defn broadcast
-  "Execute a task on all nodes in a cluster. By default it uses ignite/*compute* as compute instance.
-  Returns a collection of results or a future if :async true is passed as one of the options.
-
-  (broadcast f :args [x1 x2] :opts {:async true})
-
-  See invoke documentation for more details about tasks and options. broadcast does not support affinity."
-  [task & args+opts]
-  (let [{:keys [args opts compute]} (apply hash-map args+opts)]
-    (distributed-invoke compute (callable task args) opts
-      #(.broadcast      ^IgniteCompute %1 ^IgniteCallable %2)
-      #(.broadcastAsync ^IgniteCompute %1 ^IgniteCallable %2))))
+  :affinity-key   - affinity key or partition id
+  :reduce         - if provided it would be called on the results reducing them into a single value.
+                    It should accept 2 arguments (state, x) and should follow the same rules as task.
+  :reduce-init    - initial state of reducer state"
+  [task & tasks+args+opts]
+  (try
+    (invoke-map (parse-args task tasks+args+opts))
+    (catch Exception e
+      (throw
+        (IllegalArgumentException.
+          (format "Failed to parse args %s with %s" [task tasks+args+opts] e))))))
 
 (defn distribute
   "Returns a function which, when called, would be executed in a distributed fashion."
   [task & opts]
-  (let [{:keys [opts compute]} opts
-        compute (or compute *compute*)]
+  (let [opts-map (parse-args task opts)
+        updated-opts (update opts-map :compute #(or % *compute*))]
     (with-meta
-      (fn [& args] (invoke task :args args :opts opts :compute compute))
+      (fn [& args] (invoke-map (assoc updated-opts :args [args])))
       (merge
         (meta task)
-        {::f task
-         ::opts opts
-         ::compute compute}))))
+        {::opts-map updated-opts}))))
+
+(defn fdistribute
+  [task & opts]
+  (apply distribute task (conj (vec opts) :async true)))
 
 (defmacro with-compute
   "Evaluates body in a context in which *compute* is bound to a given compute API instance"
