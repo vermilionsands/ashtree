@@ -1,114 +1,278 @@
 (ns vermilionsands.ashtree.compute-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
-            [vermilionsands.ashtree.compute :as compute :refer [invoke invoke-seq broadcast with-compute]]
-            [vermilionsands.ashtree.fixtures :as fixtures :refer [*ignite-instance*]]
-            [vermilionsands.ashtree.function :as function :refer [sfn]]
+            [vermilionsands.ashtree.compute :as compute :refer [invoke with-compute]]
+            [vermilionsands.ashtree.function :refer [sfn]]
             [vermilionsands.ashtree.ignite :as ignite]
-            [vermilionsands.ashtree.test-helpers :as test-helpers :refer [to-upper-case]])
-  (:import [java.util UUID]
-           [org.apache.ignite.compute ComputeTaskTimeoutException]
+            [vermilionsands.ashtree.util.fixtures :as fixtures :refer [*ignite-instance*]]
+            [vermilionsands.ashtree.util.functions :as functions :refer [echo]])
+  (:import [clojure.lang IDeref IPending IBlockingDeref]
+           [java.util UUID]
+           [org.apache.ignite.compute ComputeTaskTimeoutException ComputeTaskFuture ComputeTaskSession]
            [org.apache.ignite Ignite IgniteCache]
-           [org.apache.ignite.lang IgniteFuture]))
+           [org.apache.ignite.lang IgniteFuture IgniteCallable IgniteReducer IgniteFutureCancelledException]
+           [vermilionsands.ashtree.compute AshtreeFuture]))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
 (defn- compute []
   (ignite/compute *ignite-instance*))
 
-(deftest with-compute-test
+(deftest callable-test
+  (testing "returns the same IgniteCallable"
+    (let [x (reify
+              IgniteCallable
+              (call [_] "test"))
+          callable (compute/callable x)]
+      (is (instance? IgniteCallable callable))
+      (is (= x callable))
+      (is (= "test" (.call callable)))))
+  (testing "IgniteCallable for function"
+    (let [callable (compute/callable echo ["fn-test"])]
+      (is (instance? IgniteCallable callable))
+      (is (= "fn-test" (.call callable)))))
+  (testing "IgniteCallable for symbol"
+    (let [callable (compute/callable 'vermilionsands.ashtree.util.functions/echo ["symbol-test"])]
+      (is (instance? IgniteCallable callable))
+      (is (= "symbol-test" (.call callable)))))
+  (testing "IgniteCallable for sfn"
+    (let [callable (compute/callable (sfn [x] x) ["sfn-test"])]
+      (is (instance? IgniteCallable callable))
+      (is (= "sfn-test" (.call callable)))))
+  (testing "exception for unsupported type"
+    (is (thrown? IllegalArgumentException (compute/callable "should fail")))))
+
+(deftest reducer-test
+  (testing "returns the same IgniteReducer"
+    (let [reducer-state (atom 0)
+          x (reify
+              IgniteReducer
+              (collect [_ x] (swap! reducer-state + x) true)
+              (reduce [_] @reducer-state))
+          reducer (compute/reducer x "this-should-be-ignored")]
+      (doto reducer (.collect 1) (.collect 1))
+      (is (instance? IgniteReducer reducer))
+      (is (= x reducer))
+      (is (= 2 (.reduce reducer)))))
+  (testing "IgniteReducer for function"
+    (let [reducer (compute/reducer + 0)]
+      (doto reducer (.collect 1) (.collect 1))
+      (is (instance? IgniteReducer reducer))
+      (is (= 2 (.reduce reducer)))))
+  (testing "IgniteReducer for symbol"
+    (let [reducer (compute/reducer 'clojure.core/+ 0)]
+      (doto reducer (.collect 1) (.collect 1))
+      (is (instance? IgniteReducer reducer))
+      (is (= 2 (.reduce reducer)))))
+  (testing "IgniteReducer for sfn"
+    (let [reducer (compute/reducer (sfn [acc x] (+ acc x)) 0)]
+      (doto reducer (.collect 1) (.collect 1))
+      (is (instance? IgniteReducer reducer))
+      (is (= 2 (.reduce reducer)))))
+  (testing "init value"
+    (let [no-init   (compute/reducer conj)
+          with-init (compute/reducer conj (cons 0 nil))]
+      (.collect no-init 1)
+      (.collect with-init 1)
+      (is (= (list 1)   (.reduce no-init)))
+      (is (= (list 1 0) (.reduce with-init)))))
+  (testing "exception for unsupported type"
+    (is (thrown? IllegalArgumentException (compute/reducer "should fail")))))
+
+(deftest future-test
   (with-compute (compute)
-    (is (= "ODIN" (invoke to-upper-case :args ["Odin"])))
-    (is (= #{"ODIN" "THOR"} (set (invoke-seq [to-upper-case to-upper-case] :args [["Odin"] ["Thor"]]))))
-    (is (= ["ODIN" "ODIN"] (broadcast to-upper-case :args ["Odin"])))))
+    (let [f (sfn [] (Thread/sleep 1000) :ok)
+          [^AshtreeFuture fut ^AshtreeFuture another] (into [] (repeatedly 2 (partial invoke f :async true)))]
+      (is (instance? AshtreeFuture fut))
+      (is (instance? ComputeTaskFuture fut))
+      (is (instance? IDeref fut))
+      (is (instance? IPending fut))
+      (is (instance? IBlockingDeref fut))
+      (is (not (.isRealized fut)))
+      (is (not (.isCancelled fut)))
+      (is (not (.isDone fut)))
+      (is (instance? ComputeTaskSession (.getTaskSession fut)))
+      (.cancel another)
+      (is (= :timeouted (deref fut 1 :timeouted)))
+      (is (= :ok @fut))
+      (is (.isRealized fut))
+      (is (.isDone fut))
+      (is (.isCancelled another))
+      (is (thrown? IgniteFutureCancelledException @another)))))
+
+(deftest with-compute-test
+  (testing "use with-compute instance"
+    (with-compute (compute)
+      (is (= "echo" (invoke echo :args ["echo"])))
+      (is (= ["echo" "echo"] (invoke echo :args ["echo"] :broadcast :true)))))
+  (testing "override with-compute"
+    (with-compute (compute)
+      (let [cluster-group (.forRandom (.cluster ^Ignite *ignite-instance*))
+            random-instance (ignite/compute *ignite-instance* :cluster cluster-group)]
+        (is (= ["random"] (invoke echo :args ["random"] :broadcast true :compute random-instance)))))))
+
+(deftest no-compute-fails-test
+  (is (thrown? IllegalArgumentException (invoke identity :args "fails"))))
 
 (deftest invoke-test
   (with-compute (compute)
-    (testing "invoke using function"
-      (is (= "ODIN" (invoke to-upper-case :args ["Odin"]))))
-    (testing "invoke using partial no-arg function"
-      (is (= "ODIN" (invoke (partial test-helpers/to-upper-case "Odin")))))
-    (testing "invoke using symbol"
-      (is (= "ODIN" (invoke 'vermilionsands.ashtree.test-helpers/to-upper-case :args ["Odin"]))))
-    ; works in practice, fails in test
-    #_(testing "invoke using unqualified symbol"
-        (is (= "ODIN" (invoke 'to-upper-case :args ["Odin"]))))
-    (testing "invoke using serializable function"
-      (is (= "ODIN" (invoke (sfn [s] (.toUpperCase s)) :args ["Odin"]))))
-    (testing "invoke with async flag and normal function"
-      (let [result (invoke to-upper-case :opts {:async true} :args ["future"])]
-        (is (instance? IgniteFuture result))
-        (is (= "FUTURE" @result))))
-    (testing "invoke with timeout"
+    (testing "invoke with function"
+      (is (= "echo" (invoke echo :args ["echo"])))
+      (is (= "no-arg echo" (invoke (partial echo "no-arg echo")))))
+    (testing "invoke with symbol"
+      (is (= "echo" (invoke 'vermilionsands.ashtree.util.functions/echo :args ["echo"]))))
+    (testing "invoke with sfn"
+      (is (= "echo" (invoke (sfn [x] x) :args ["echo"]))))))
+
+(deftest invoke-with-broadcast-test
+  (with-compute (compute)
+    (let [result (invoke functions/get-node-id :args [*ignite-instance*] :broadcast true)]
+      (is (vector? result))
+      (is (= 2 (count (set result)))))))
+
+(deftest invoke-with-multiple-tasks-test
+  (with-compute (compute)
+    (testing "multiple tasks without args"
+      (let [result (invoke (partial echo "task1") (partial echo "task2"))]
+        (is (vector? result))
+        (is (= #{"task1" "task2"} (set result)))))
+    (testing "multiple tasks with args"
+      (is (= #{"task1" "task2"} (set (invoke echo echo :args ["task1"] ["task2"])))))
+    (testing "mixed multiple tasks"
+      (is (= #{"task1" "task2"} (set (invoke echo (partial echo "task2") :args ["task1"] nil)))))))
+
+(deftest async-invoke-option-test
+  (with-compute (compute)
+    (testing "async invoke"
+      (let [result (invoke echo :async true :args ["future"])]
+        (is (instance? AshtreeFuture result))
+        (is (= "future" @result))))
+    (testing "async broadcast"
+      (let [result (invoke echo :async true :args ["future"] :broadcast true)]
+        (is (instance? AshtreeFuture result))
+        (is (vector? @result))
+        (is (= ["future" "future"] @result))))
+    (testing "async invoke with multiple tasks"
+      (let [result (invoke echo echo :async true :args ["future"] ["future"])]
+        (is (instance? AshtreeFuture result))
+        (is (vector? @result))
+        (is (= ["future" "future"] @result))))))
+
+(deftest timeout-option-test
+  (with-compute (compute)
+    (testing "timeout without async"
       (is (thrown? ComputeTaskTimeoutException
-            (invoke (sfn [] (Thread/sleep 100) :ok) :opts {:timeout 1}))))))
+                   (invoke (sfn [] (Thread/sleep 1000) :ok) :timeout 100))))
+    (testing "timeout with async"
+      (is (thrown? ComputeTaskTimeoutException
+                   @(invoke (sfn [] (Thread/sleep 1000) :ok) :timeout 100 :async true))))))
 
-(deftest invoke-seq-test
+(deftest task-name-option-test
   (with-compute (compute)
-    (testing "invoke-seq with no-arg functions"
-      (is (= #{"THOR" "ODIN" "TYR" "LOKI"}
-             (set (invoke-seq (map #(partial to-upper-case %) ["Odin" "Thor" "Loki" "Tyr"]))))))
-    (testing "invoke-seq with args"
-      (is (= #{"THOR" "ODIN"}
-             (set (invoke-seq (repeat 2 to-upper-case) :args [["Odin"] ["Thor"]])))))
-    (testing "invoke-seq with mixed no-arg and arity 1 functions"
-      (is (= #{"THOR" "ODIN" "TYR"}
-             (set
-               (invoke-seq
-                 [to-upper-case (partial to-upper-case "Thor") (partial to-upper-case "Tyr")]
-                 :args [["Odin"] nil []])))))
-    (testing "invoke-seq with async flag and normal function"
-      (let [result (invoke-seq (repeat 2 to-upper-case) :opts {:async true} :args [["future"] ["future"]])]
-        (is (instance? IgniteFuture result))
-        (is (= ["FUTURE" "FUTURE"] @result))))))
+    (let [result (invoke (sfn [] (Thread/sleep 1000) :ok) :async true :name "test-task")]
+      (is (= "test-task"
+             (.getTaskName (.getTaskSession ^ComputeTaskFuture (.future result)))))
+      (.cancel result))))
 
-(deftest broadcast-test
+(deftest reduce-option-test
   (with-compute (compute)
-    (testing "Basic broadcast"
-      (is (= ["ECHO" "ECHO"] (broadcast to-upper-case :args ["Echo"]))))
-    (testing "Passing Ignite instance to function"
-      (is (every? #(instance? UUID %) (broadcast test-helpers/get-node-id :args [*ignite-instance*]))))
-    (testing "Passing Ignite instance to serializable function"
-      (is (every? #(instance? UUID %)
-                  (broadcast
-                    (sfn [ignite] (.id (.localNode (.cluster ignite))))
-                    :args [*ignite-instance*]))))
-    (testing "Broadcast with options"
-      (let [result (broadcast to-upper-case :opts {:async true} :args ["future"])]
-        (is (instance? IgniteFuture result))
-        (is (= ["FUTURE" "FUTURE"] @result))))))
+    (testing "sync reduce"
+      (is (= "test-echoecho" (invoke echo echo :args ["echo"] ["echo"] :reduce str :reduce-init "test-")))
+      (is (= "echoecho" (invoke echo echo :args ["echo"] ["echo"] :reduce str))))
+    (testing "async reduce"
+      (is (= "test-echoecho" @(invoke echo echo :args ["echo"] ["echo"] :reduce str :reduce-init "test-" :async true)))
+      (is (= "echoecho" @(invoke echo echo :args ["echo"] ["echo"] :reduce str :async true))))))
+
+(deftest affinity-option-test
+  (with-compute (compute)
+    (let [fst-name "fst-affinity-cache"
+          snd-name "snd-affinity-cache"
+          fst-key :test-key-1
+          snd-key :test-key-2
+          fst-val "test-val-1"
+          snd-val "test-val-2"
+          fst-cache (.getOrCreateCache ^Ignite *ignite-instance* fst-name)
+          snd-cache (.getOrCreateCache ^Ignite *ignite-instance* snd-name)]
+      (.put ^IgniteCache fst-cache fst-key fst-val)
+      (.put ^IgniteCache snd-cache snd-key snd-val)
+      (testing "Sync affinity call"
+        (is (every? #(= % fst-val)
+                    (for [_ (range 10)]
+                      (invoke functions/cache-peek
+                              :args [fst-cache fst-key]
+                              :affinity-cache fst-name
+                              :affinity-key fst-key))))
+        (is (every? #(= % snd-val)
+                    (for [_ (range 10)]
+                      (invoke functions/cache-peek
+                              :args [snd-cache snd-key]
+                              :affinity-cache [fst-name snd-name]
+                              :affinity-key snd-key)))))
+      (testing "Async affinity call"
+        (is (every? #(= % fst-val)
+                    (map deref
+                      (for [_ (range 10)]
+                        (invoke functions/cache-peek
+                                :args [fst-cache fst-key]
+                                :affinity-cache fst-name
+                                :affinity-key fst-key
+                                :async true)))))
+        (is (every? #(= % snd-val)
+                    (map deref
+                      (for [_ (range 10)]
+                        (invoke functions/cache-peek
+                                :args [snd-cache snd-key]
+                                :affinity-cache [fst-name snd-name]
+                                :affinity-key snd-key
+                                :async true)))))))))
 
 (deftest per-node-shared-state-test
   ;; call 3 times on 2 nodes - 1 would be called 2 times, one 1 time
   ;; flickers sometimes when other tests fail
-  (is (= #{1 2}
-         (set
-           (invoke-seq
-             (repeat 3 (partial test-helpers/inc-node-state *ignite-instance*))
-             :compute (compute))))))
-
-(deftest reducer-test
   (with-compute (compute)
-    (testing "Reducer without init value"
-      (is (#{"RAGNAROK" "ROKRAGNA"} ;; there is no ordering guarantee
-            (invoke-seq (repeat 2 to-upper-case) :args [["RAGNA"] ["ROK"]] :opts {:reduce str}))))
-    (testing "Reducer with init value"
-      (is (= 7
-             (invoke-seq (repeat 2 (partial * 2)) :args [[1] [2]] :opts {:reduce + :reduce-init 1}))))))
+    (is (= [1 1 2]
+           (sort
+             (apply invoke (repeat 3 (partial functions/inc-node-state *ignite-instance*))))))))
 
-(deftest affinity-test
-  (let [cache (.getOrCreateCache ^Ignite *ignite-instance* "affinity-test")]
-    (.put ^IgniteCache cache :test-key "test-val")
-    (with-compute (compute)
-      (testing "Sync affinity call"
-        (is (every? #(= % "test-val")
-                    (for [_ (range 10)]
-                      (invoke test-helpers/cache-peek
-                        :args [cache :test-key]
-                        :opts {:affinity-cache "affinity-test" :affinity-key :test-key})))))
-      (testing "Async affinity call"
-        (is (every? #(= % "test-val")
-                    (map deref
-                      (for [_ (range 10)]
-                        (invoke test-helpers/cache-peek
-                                :args [cache :test-key]
-                                :opts {:async true :affinity-cache "affinity-test" :affinity-key :test-key})))))))))
+(deftest incorrect-configuration-test
+  (let [validate-opts #'compute/validate-opts]
+    (is (thrown? IllegalArgumentException (validate-opts {})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+] :args [[1 2] [2 3]]})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+] :reduce +})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+ +] :broadcast true})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+] :affinity-cache "cache" :broadcast true})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+] :affinity-cache "cache"})))
+    (is (thrown? IllegalArgumentException (validate-opts {:tasks [+] :affinity-key "key"})))))
+
+(deftest finvoke-test
+  (with-compute (compute)
+    (let [result (compute/finvoke echo :args ["future"])]
+      (is (instance? IgniteFuture result))
+      (is (= "future" @result)))))
+
+(deftest distribute-test
+  (testing "distribute without compute"
+    (let [f (compute/distribute echo)
+          g (compute/distribute 'vermilionsands.ashtree.util.functions/echo)
+          h (compute/distribute (sfn [x] x))]
+      (is (thrown? IllegalArgumentException (f "echo")))
+      (with-compute (compute)
+        (is (= "echo" (f "echo")))
+        (is (= "echo" (g "echo")))
+        (is (= "echo" (h "echo"))))))
+  (testing "distribute with with-compute retains compute instance"
+    (let [f (with-compute (compute) (compute/distribute echo))]
+      (is (= "echo" (f "echo")))))
+  (testing "distribute with :compute"
+    (let [f (compute/distribute echo :compute (compute))]
+      (is (= "echo" (f "echo"))))))
+
+(deftest fdistribute-test
+  (let [f (compute/fdistribute echo :compute (compute))
+        result (f "future")]
+    (is (instance? IgniteFuture result))
+    (is (= "future" @result))))
+
+(deftest invoke*-test
+  (with-compute (compute)
+    (is (= "echo" (compute/invoke* {:tasks [echo] :args [["echo"]]})))
+    (is (= "echo" @(compute/invoke* echo {:args [["echo"]] :async true})))))

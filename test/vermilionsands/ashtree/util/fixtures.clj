@@ -1,9 +1,10 @@
-(ns vermilionsands.ashtree.fixtures
+(ns vermilionsands.ashtree.util.fixtures
   (:import [org.apache.ignite Ignition Ignite]
            [org.apache.ignite.cache CacheMode]
            [org.apache.ignite.configuration IgniteConfiguration AtomicConfiguration]))
 
-(def ^:dynamic *ignite-instance* nil)
+(def ^:dynamic *ignite-instances* nil)
+(def ^:dynamic *ignite-instance*  nil)
 
 (defn- instance-config []
   (doto (IgniteConfiguration.)
@@ -23,7 +24,8 @@
      (let [instances (mapv (fn [_] (Ignition/start ^IgniteConfiguration (instance-config))) (range n))]
        (try
          (if bind?
-           (binding [*ignite-instance* (first instances)]
+           (binding [*ignite-instances* instances
+                     *ignite-instance*  (first instances)]
              (f))
            (f))
          (finally

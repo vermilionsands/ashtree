@@ -1,7 +1,7 @@
 (ns vermilionsands.ashtree.ignite-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vermilionsands.ashtree.ignite :as ignite]
-            [vermilionsands.ashtree.fixtures :as fixtures :refer [*ignite-instance*]])
+            [vermilionsands.ashtree.util.fixtures :as fixtures :refer [*ignite-instance*]])
   (:import [org.apache.ignite Ignition IgniteCompute Ignite]
            [org.apache.ignite.lang IgniteAsyncSupport]))
 
@@ -23,18 +23,12 @@
       (is (false? (.isAsync ^IgniteAsyncSupport compute)))
       (is (nil? (compute-executor-name compute)))))
   (testing "Instance with async enabled"
-    (let [compute (ignite/compute *ignite-instance* {:async true})]
+    (let [compute (ignite/compute *ignite-instance* :async true)]
       (is (.isAsync compute))))
   (testing "Instance with non-default executor"
-    (let [compute (ignite/compute *ignite-instance* {:executor "test-pool"})]
+    (let [compute (ignite/compute *ignite-instance* :executor "test-pool")]
       (is (= "test-pool" (compute-executor-name compute)))))
   (testing "Instance with cluster group"
     (let [test-cluster (.forRemotes (.cluster *ignite-instance*))
-          compute (ignite/compute *ignite-instance* {:cluster-group test-cluster})]
+          compute (ignite/compute *ignite-instance* :cluster test-cluster)]
       (is (= test-cluster (.clusterGroup compute))))))
-
-(deftest with-compute-test
-  (testing "*compute* has correct value"
-    (let [compute (ignite/compute *ignite-instance*)]
-      (ignite/with-compute compute
-        (is (= ignite/*compute* compute))))))

@@ -1,8 +1,10 @@
-(ns vermilionsands.ashtree.test-helpers
+(ns vermilionsands.ashtree.util.functions
+  "AOT-compiled functions for various tests."
   (:require [clojure.string :as string])
   (:import [org.apache.ignite Ignite IgniteCache])
   (:gen-class))
 
+;; for atom tests
 (defn less-than-10 [x]
   (< x 10))
 
@@ -20,23 +22,21 @@
 (defn store-to-atom-watch [_ _ old-val new-val]
   (swap! watch-log conj [old-val new-val]))
 
-(defn- to-upper-case* [x]
-  (string/upper-case x))
-
-;; deliberately complicated to avoid using only java/core methods and fns
-(defn to-upper-case [x]
-  (to-upper-case* x))
+;; for compute tests
+(defn echo [x] x)
 
 (defn get-node-id [^Ignite ignite]
-  (.id (.localNode (.cluster ignite))))
+  (let [n (.localNode (.cluster ignite))]
+    (.id (.localNode (.cluster ignite)))))
 
 (defn inc-node-state [^Ignite ignite]
-  (let [local-node-map (.nodeLocalMap (.cluster ignite))
-        v (.get local-node-map "counter")
-        counter-atom (or v (atom 0))]
-    (when-not v
-      (.putIfAbsent local-node-map "counter" counter-atom))
-    (swap! counter-atom inc)))
+  (let [k "counter"
+        local-node-map (.nodeLocalMap (.cluster ignite))]
+    (if-let [counter-atom (.get local-node-map k)]
+      (swap! counter-atom inc)
+      (do
+        (.putIfAbsent local-node-map k (atom 0))
+        (swap! (.get local-node-map k) inc)))))
 
 (defn cache-peek [^IgniteCache cache key]
   (.localPeek cache key nil))

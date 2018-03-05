@@ -9,4 +9,4 @@
   :profiles {:dev  {:source-paths ["dev"]
                     :aot [functions vermilionsands.ashtree.compute]
                     :global-vars {*warn-on-reflection* true}}
-             :test {:aot [vermilionsands.ashtree.test-helpers]}})
+             :test {:aot [vermilionsands.ashtree.util.functions]}})

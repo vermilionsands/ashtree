@@ -30,7 +30,7 @@ Start Ignite in REPL:
       (doto (AtomicConfiguration.)
         (.setCacheMode CacheMode/REPLICATED))))))
             
-;; define a function, normally this should be AOT-compiled but we can use a workaround
+;; define a function, normally this should be AOT-compiled but we can use a call with symbol as a workaround
 (defn hello! [x] (println "Hello" x "from Ignite!") :ok)        
 ```
 Repeat the above in a different REPL (different JVM instance). 
@@ -41,8 +41,8 @@ In one of the REPLs:
 (require '[vermilionsands.ashtree.compute :as compute])
 
 ;; broadcast a function to all nodes
-(ignite/with-compute (ignite/compute ignite)
-  (compute/broadcast 'user/hello! :args ["Stranger"])) 
+(compute/with-compute (ignite/compute ignite)
+  (compute/invoke 'user/hello! :args ["Stranger"] :broadcast true)) 
 ```
 
 You should see a printed string on both REPLs and a vector `[:ok :ok]` as a function
@@ -55,66 +55,75 @@ result on the calling one.
 To send a task to a single node use `invoke` function:
 
 ```clj
-(ignite/with-compute compute-instance
-  (compute/invoke some-foo))
+(compute/with-compute compute-instance
+  (compute/invoke some-fn))
   
-;; would return a result from some-foo  
+;; would return a result from some-fn  
 ```
 
-As a result you would get a return value from `some-foo`.
+As a result you would get a return value from `some-fn`.
 
-`ignite/with-compute` binds a compute API instance to `ignite/*compute*` which is later used by `invoke`. 
-Alternatively you can use `invoke*` which accepts compute API instance as one of it's arguments.
+`ignite/with-compute` binds a compute API instance to `compute/*compute*` which is later used by `invoke`. 
+Alternatively you can use `:compute` option to submit a compute instance to invoke. 
 
 ```clj
-(compute/invoke* compute-instance some-foo)
+(compute/invoke some-fn :compute compute-instance)
 ```
 
 To pass arguments to a function use `:args args-vector` option. For no-arg functions you can
 skip this, or pass `nil` or `[]`.
 
 ```clj 
-(compute/invoke* compute-instance some-foo-with-args :args [arg1 arg2 arg3])
+(compute/with-compute compute-instance 
+  (compute/invoke some-fn-with-args :args [arg1 arg2 arg3]))
 ```
 
-To send a task to all nodes use `broadcast` and `broadcast*`. It works in the same way as `invoke`
-but returns a vector of results from all nodes.
+##### Broadcast
+
+To send a task to all nodes use `:broadcast` option. Tasks would be executed on each node in cluster group associated
+with compute instance and it would return a vector of results from all nodes.
 
 ```clj
-(ignite/with-compute compute-instance
-  (compute/broadcast some-foo))
+(compute/with-compute compute-instance
+  (compute/invoke some-fn :broadcast true))
 
 ;; would return a vector of results    
 ```
 
-There's also `invoke-seq` and `invoke-seq*` which can be used to send multiple tasks at once. You can use it to mix
-multiple different functions and call them together.
+##### Call many tasks in one call
+
+There's also an option to to send multiple tasks at once. You can use it to mix multiple different functions 
+and call them together.
 
 ```clj 
-(ignite/with-compute compute-instance 
-  (compute/invoke-seq [some-foo1 some-foo2])
-  (compite/invoke-seq [some-foo-with-args1 some-foo-with-arg2] :args [first-foo-args-vector second-foo-args-vector])
+(compute/with-compute compute-instance 
+  (compute/invoke some-fn-with-args1 some-fn-with-arg2 :args [first-fn-args-vector] [second-fn-args-vector])
   
 ;; would return a vector of results   
 ``` 
 
 ##### Async
 
-To enable async mode add `:async true` to task `:opts` like this:
+To enable async mode add `:async true` option like this:
 
 ```clj
-(compute/invoke* compute-instance some-foo :opts {:async true})
+(compute/with-compute compute-instance
+  (compute/invoke compute-instance some-fn :async true)
 
-;; would return IgniteFuture instance
+;; would return an IgniteFuture instance
 ```
 
-Returned future is an instance of `IgniteFuture` which implements `IDeref` so it can be used in `deref` or `@`.
+Returned future is an instance of `IgniteFuture` which implements `IDeref`, `IPending` and `IBlockingDeref` so it 
+can be used in `deref` or `@` like standard `future`.
+
+There is a `finvoke` function which is a variant of `invoke` that adds `:async true` option.
 
 ##### Tasks
 
 Task function have to be available on all nodes that would be executing given task. Function can be either a no-arg
 function (you can use `partial` to turn any function into a no-arg version) or can accept args which can be passed as 
-one of the task options. 
+one of the task options. Right now it has to be an instance of `AFn` so some classes that implement `IFn` interface 
+would not qualify (this may change in future). 
 
 Apart from standard functions there are two alternative ways to submit functions
 
@@ -122,7 +131,7 @@ Apart from standard functions there are two alternative ways to submit functions
   on executing node and call the function. 
 
   ```clj
-  (ignite/with-compute (ignite/compute ignite)
+  (compute/with-compute compute-instance
     (compute/invoke 'some-ns/some-fn)) 
   ```  
   
@@ -133,11 +142,11 @@ Apart from standard functions there are two alternative ways to submit functions
   ```clj
   (require '[vermilionsands.ashtree.function :as function])
   
-  (ignite/with-compute (ignite/compute ignite)
+  (compute/with-compute compute-instance
     (compute/invoke (function/sfn [] (println "Hello from arbitrary function!")))) 
   ```
   
-  There's a `*callable-eval*` var in `compute` ns which defines an `eval` function used to eval these functions.
+  There's a `*callable-eval*` var in `function` ns which defines an `eval` function used to eval these functions.
   By default it would memoize 100 functions using LRU caching.      
 
 ##### Selecting nodes for execution
@@ -145,30 +154,52 @@ Which nodes would be eligible to process the task depends on cluster group used 
 
 ##### Task options
 
-Task options can be passed in a map under `:opts` key like this:
+`invoke` supports the following options, which can be supplied as additional arguments:
 
 ```clj
-(compute/invoke* compute-instance some-foo :opts {:async true :timeout 1000 :name "some-task-name"})
+(compute/invoke some-fn :args [1 2] :async true :name "distributed-function" :timeout 1000)
 ```
 
-For all functions:
+* `:args` - seqs of arguments for tasks
 * `:async` - enable async execution if true
-* `:timeout` - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
-* `:no-failover` - execute with no failover mode if true
+* `:broadcast` - would be executed on all nodes if true
+* `:compute` - compute API instance, would override `*compute*`
 * `:name` - name for this task
+* `:no-failover` - execute with no failover mode if true
+* `:timeout` - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
 
-For `invoke`/`invoke*`
+For `invoke` with single task:
 * `:affinity-cache` - cache name(s) for [affinity call](https://apacheignite.readme.io/docs/collocate-compute-and-data)
 * `:affinity-key` - affinity key or partition id
  
-For `invoke-seq`/`invoke-seq*`
+For `invoke` with multiple tasks:
 * `:reduce` - if provided it would be called on the results reducing them into a single value.
 It should accept 2 arguments (state, x) and should follow the same rules as task.
 * `:reduce-init` - initial state of reducer state
 
+See `invoke` doc for more info. If instead of additional args you would like to pass options as map check `invoke*`.
+
+##### Distributed function 
+
+`distribute` function accepts a task and additional options and returns a new function which would
+call `invoke` with supplied task, options and args. If it is called with bounded `*compute*` or with `:compute` 
+option, new function would keep compute API instance.
+
+```clj
+;; using hello! from earlier example
+;; create a distributed version
+(def distributed-hello! 
+  (compute/invoke 'user/hello! :compute (ignite/compute ignite)))
+  
+;; call it later, it would be executed on cluster
+(distributed-hello! "John")  
+```
+
+There is a `fdistribute` function which is a variant of `distribute` that adds `:async true` option.
+
 ##### misc
-* in case of Binary Marshaller exceptions double check that you have your namespace with offending code AOTed. Usually
-  it solves the problem. 
+* in case of Binary Marshaller exceptions double check that you have your namespace with offending code AOT compiled. 
+  Usually it solves the problem. 
  
 ### Distributed atom
 

@@ -1,5 +1,39 @@
 (ns vermilionsands.ashtree.function
+  (:require [clojure.core.memoize :as memoize])
   (:import [clojure.lang Compiler$LocalBinding]))
+
+(def ^:dynamic *callable-eval*
+  "Eval function that would be used by IgniteCallable wrapper for serializable functions.
+
+  By default it would keep 100 elements using LRU memoization."
+  (memoize/lru eval :lru/threshold 100))
+
+(defn eval-fn [form]
+  (with-meta
+    (fn [& args]
+      (let [f ((or *callable-eval* eval) form)]
+        (apply f args)))
+    (meta form)))
+
+(defn symbol-fn
+  "Returns a function that tries to resolve a symbol sym to a var and calls it with supplied args.
+
+  Args:
+  sym  - symbol, if it is not fully qualified symbol-fn would try to resolve it *as is* and create a
+         fully qualified version
+  args - optional args that would be applied to resolved function"
+  [sym]
+  (let [{:keys [name ns]} (-> sym resolve meta)
+        sym (if name
+              (symbol (str (ns-name ns)) (str name))
+              sym)]
+    (with-meta
+      (fn [& args]
+        (let [f-var (resolve sym)]
+          (when-not f-var
+            (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
+          (apply @f-var args)))
+      (meta sym))))
 
 ;; todo
 ;; parts of this logic seem to be useless in this usecase

@@ -1,23 +1,16 @@
 (ns vermilionsands.ashtree.compute
-  (:require [clojure.core.memoize :as memoize]
-            [vermilionsands.ashtree.function :as function]
-            [vermilionsands.ashtree.ignite :as ignite])
-  (:import [clojure.lang IDeref IMeta IBlockingDeref IPending]
+  (:require [vermilionsands.ashtree.function :as function])
+  (:import [clojure.lang IDeref IMeta IBlockingDeref IPending AFn]
            [java.util Collection]
-           [java.util.concurrent TimeUnit TimeoutException]
+           [java.util.concurrent TimeUnit]
            [org.apache.ignite IgniteCompute Ignite]
-           [org.apache.ignite.lang IgniteCallable IgniteFuture IgniteReducer])
+           [org.apache.ignite.compute ComputeTaskFuture]
+           [org.apache.ignite.lang IgniteCallable IgniteFuture IgniteReducer IgniteFutureTimeoutException IgniteClosure])
   (:gen-class))
 
 (def ^:dynamic *compute*
   "Compute API instance to be used with with-compute"
   nil)
-
-(def ^:dynamic *callable-eval*
-  "Eval function that would be used by IgniteCallable wrapper for serializable functions.
-
-  By default it would keep 100 elements using LRU memoization."
-  (memoize/lru eval :lru/threshold 100))
 
 (deftype AshtreeCallable [f args]
   IgniteCallable
@@ -36,83 +29,66 @@
    (reduce [_]
      @state))
 
-(deftype AshtreeFuture [^IgniteFuture future]
+(deftype AshtreeFuture [^ComputeTaskFuture future on-get]
   IDeref
-  (deref [_]
-    (.get future))
+  (deref [this]
+    (.get this))
 
   IBlockingDeref
-  (deref [_ timeout-ms timeout-val]
+  (deref [this timeout-ms timeout-val]
     (try
-      (.get future timeout-ms TimeUnit/MILLISECONDS)
-      (catch TimeoutException _ timeout-val)))
+      (.get this timeout-ms TimeUnit/MILLISECONDS)
+      (catch IgniteFutureTimeoutException _ timeout-val)))
 
   IPending
   (isRealized [_]
     (.isDone future))
 
-  IgniteFuture
+  ComputeTaskFuture
   (cancel [_]
     (.cancel future))
 
   (chain [_ on-done]
-    (AshtreeFuture. (.chain future on-done)))
+    (throw (UnsupportedOperationException. "Not implemented yet!")))
 
   (chainAsync [_ on-done exec]
-    (AshtreeFuture. (.chainAsync future on-done exec)))
+    (throw (UnsupportedOperationException. "Not implemented yet!")))
 
   (get [_]
-    (.get future))
+    (if on-get
+      (on-get (.get future))
+      (.get future)))
 
-  (get [_ timeout]
-    (.get future timeout))
+  (get [this timeout]
+    (.get this timeout TimeUnit/MILLISECONDS))
 
   (get [_ timeout unit]
-    (.get future timeout unit))
+    (if on-get
+      (on-get (.get future timeout unit))
+      (.get future timeout unit)))
 
   (isCancelled [_]
     (.isCancelled future))
 
-  (isDone [_]
-    (.isDone future))
+  (isDone [this]
+    (.isRealized this))
 
   (listen [_ listener]
-    (.listen future listener))
+    (throw (UnsupportedOperationException. "Not implemented yet!")))
 
   (listenAsync [_ listener exec]
-    (.listenAsync future listener exec)))
+    (throw (UnsupportedOperationException. "Not implemented yet!")))
 
-(defn eval-fn [form]
-  (with-meta
-    (fn [& args]
-      (let [f ((or *callable-eval* eval) form)]
-        (apply f args)))
-    (meta form)))
+  (getTaskSession [_]
+    (.getTaskSession future)))
 
-(defn symbol-fn
-  "Returns a function that tries to resolve a symbol sym to a var and calls it with supplied args.
-
-  Args:
-  sym  - symbol, if it is not fully qualified symbol-fn would try to resolve it *as is* and create a
-         fully qualified version
-  args - optional args that would be applied to resolved function"
-  [sym]
-  (let [{:keys [name ns]} (-> sym resolve meta)
-        sym (if name
-              (symbol (str (ns-name ns)) (str name))
-              sym)]
-    (with-meta
-      (fn [& args]
-        (let [f-var (resolve sym)]
-          (when-not f-var
-            (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
-          (apply @f-var args)))
-      (meta sym))))
+(defn- afn? [task]
+  (instance? AFn task))
 
 (defn- callable? [task]
   (instance? IgniteCallable task))
 
-(defn callable
+(defn ^IgniteCallable callable
   "Create an IgniteCallable instance for a task.
 
   Accepts either a standard clojure function or a serializable function (from function namespace), which would be
@@ -121,18 +97,18 @@
   Args:
   task - clojure function, serializable function or fully qualified symbol
   args - argument vector for task, can be nil, or empty if task is a no-arg function"
-  [task args]
+  [task & [args]]
   (cond
     (callable? task)              task
-    (function/serializable? task) (->AshtreeCallable (eval-fn (function/eval-form task)) args)
-    (symbol? task)                (->AshtreeCallable (symbol-fn task) args)
-    (fn? task)                    (->AshtreeCallable task args)
+    (function/serializable? task) (->AshtreeCallable (function/eval-fn (function/eval-form task)) args)
+    (symbol? task)                (->AshtreeCallable (function/symbol-fn task) args)
+    (afn? task)                   (->AshtreeCallable task args)
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
 
 (defn- reducer? [task]
   (instance? IgniteReducer task))
 
-(defn reducer
+(defn ^IgniteReducer reducer
   "Create an IgniteReducer instance for a task. See callable for acceptable tasks.
 
   Args:
@@ -144,9 +120,9 @@
   (let [state (atom init-value)]
     (cond
       (reducer? task)               task
-      (function/serializable? task) (->AshtreeReducer (eval-fn (function/eval-form task)) state)
-      (symbol? task)                (->AshtreeReducer (symbol-fn task) state)
-      (fn? task)                    (->AshtreeReducer task state)
+      (function/serializable? task) (->AshtreeReducer (function/eval-fn (function/eval-form task)) state)
+      (symbol? task)                (->AshtreeReducer (function/symbol-fn task) state)
+      (afn? task)                   (->AshtreeReducer task state)
       :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteReducer from %s" task))))))
 
 (defn- compute-for-task [compute name timeout no-failover]
@@ -155,18 +131,52 @@
     no-failover (.withNoFailover)
     name        (.withName name)))
 
-(defn- parse-args [task opts-seq]
-  (let [xs (cons :tasks (cons task opts-seq))
-        xf (comp (partition-by keyword?) (partition-all 2) (map #(apply concat %)))]
-    (reduce (fn [m [k & v]] (assoc m k (vec v))) {} (sequence xf xs))))
+;; spec to the rescue?
+;; current approach seems to have some nasty corner cases
+(defn parse-args [task opts-seq]
+  (letfn [(take-value [k x xs]
+            (if (#{:args :tasks} k)
+              (let [[l r] (split-with (complement keyword?) xs)]
+                [(vec (cons x l)) r])
+              [x xs]))]
+    (try
+      (let [xs (cons :tasks (cons task opts-seq))]
+        (loop [acc {} [k v & rest] xs]
+          (if (nil? k)
+            acc
+            (let [[v' rest'] (take-value k v rest)]
+              (recur (assoc acc k v') rest')))))
+      (catch Exception e
+        (throw
+          (IllegalArgumentException.
+            (format "Failed to parse args %s with %s" [task opts-seq] e)))))))
 
 (defn- validate-opts [opts-map]
-  (let [{:keys [tasks args]} opts-map]
-    (when-not (or (= (count tasks) (count args))
-                  (empty? args))
-      (throw (IllegalArgumentException.
-               (format "Count of tasks (%s) does not match with count of args vectors (%s)"
-                       (count tasks) (count args)))))))
+  (let [illegal (fn [s & xs] (throw (IllegalArgumentException. ^String (apply format s xs))))
+        {:keys [tasks args broadcast affinity-cache affinity-key]} opts-map
+        task-count (count tasks)
+        arg-count (count args)]
+    (cond
+      (empty? tasks)
+      (illegal "No tasks!")
+
+      (and (not (empty? args)) (not= task-count arg-count))
+      (illegal "Count of tasks (%s) does not match with count of args vectors (%s)"
+               task-count arg-count)
+
+      (and (:reduce opts-map) (< task-count 2))
+      (illegal "Reduce is only supported for multiple tasks")
+
+      (and affinity-cache (or broadcast (> task-count 1)))
+      (illegal "Cannot mix affinity call with broadcast or multiple tasks")
+
+      (or (and (nil? affinity-cache) (some? affinity-key))
+          (and (some? affinity-cache) (nil? affinity-key)))
+      (illegal "Both affinity-cache and affinity-key options are required")
+
+      (and broadcast (> task-count 1))
+      (illegal "Cannot mix multiple tasks with broadcast"))
+    true))
 
 (defn- compute-method [{:keys [tasks async broadcast affinity-cache affinity-key reduce reduce-init]}]
   (let [[_ multiple?] tasks
@@ -186,81 +196,115 @@
 
       :else
       (cond
-        broadcast #(.broadcast ^IgniteCompute %1 ^IgniteCallable %2)
+        broadcast #(vec (.broadcast ^IgniteCompute %1 ^IgniteCallable %2))
         reduce    #(.call ^IgniteCompute %1 ^Collection %2 ^IgniteReducer (reducer reduce reduce-init))
-        multiple? #(.call ^IgniteCompute %1 ^Collection %2)
+        multiple? #(vec (.call ^IgniteCompute %1 ^Collection %2))
         part-id?  #(.affinityCall ^IgniteCompute %1 ^Collection affinity-cache ^int (int affinity-key) ^IgniteCallable %2)
         caches?   #(.affinityCall ^IgniteCompute %1 ^Collection affinity-cache ^Object affinity-key ^IgniteCallable %2)
         aff?      #(.affinityCall ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
         :else     #(.call ^IgniteCompute %1 ^IgniteCallable %2)))))
 
-(defn invoke-map [opts-map]
-  (let [{:keys [tasks args compute async name timeout no-failover]} opts-map
-        _ (validate-opts opts-map)
-        callable (cond->
-                   (mapv callable tasks (or args (repeat nil)))
-                   (nil? (second tasks)) first)
-        compute (some->
-                  (or compute *compute*)
-                  (compute-for-task name timeout no-failover))
-        f (compute-method opts-map)]
-    (when-not compute (throw (IllegalArgumentException. "No compute API instance!")))
-    (cond-> (f compute callable) async (->AshtreeFuture))))
+(defn invoke*
+  "Execute a task on a cluster. See invoke for more details.
+
+  Accepts an options map which should contain a seq of tasks under :tasks key plus can have any option valid for invoke."
+  ([opts-map]
+   (let [{:keys [tasks args compute async broadcast name no-failover reduce timeout]} opts-map
+         _ (validate-opts opts-map)
+         to-vec? (or broadcast (and (second tasks) (nil? reduce)))
+         ignite-callable
+         (if (second tasks)
+           (mapv callable tasks (or args (repeat nil)))
+           (callable (first tasks) (first args)))
+         compute
+         (if-let [c (or compute *compute*)]
+           (compute-for-task c name timeout no-failover)
+           (throw (IllegalArgumentException. "No compute API instance!")))
+         result ((compute-method opts-map) compute ignite-callable)]
+     (if async
+       (if to-vec?
+         (->AshtreeFuture result vec)
+         (->AshtreeFuture result nil))
+       result)))
+  ([task opts-map]
+   (invoke* (update opts-map :tasks #(cons %2 %1) task))))
 
 (defn invoke
-  "Execute a task on a cluster. By default it uses ignite/*compute* as compute instance.
+  "Execute a task on a cluster. Returns one of the following: task result, future or vector of results, depending
+  on passed options.
 
-  A task can be one of the following:
-  * clojure function       - has to be available on both caller and executing node, should be AOT compiled
-  * serializable function  - from function namespace. It would be passed as data, and evaled on executing node
-                             (this is EXPERIMENTAL!!!)
-  * symbol                 - preferably fully qualified, it would be resolved to a function. Only has to be valid
-                             on executing node
-
-  Returns a function's return value or a future if :async true is passed as one of the options.
-  Returned future is an IgniteFuture and can be derefed like standard future.
-
-  <fix samples and rest>
+  Sample calls:
+  (invoke task)
+  (invoke task :args args-seq)
+  (invoke task :args args-seq :async true)
+  (invoke task1 task2 :args args-seq1 args-seq2 :async true)
+  (invoke task :compute compute-instance)
 
   Args:
   task - task to execute
 
+  Task can be one of the following:
+  * clojure function       - has to be available on both caller and executing node, should be AOT compiled
+  * serializable function  - defined using sfn/defsfn from function namespace, would be passed as data, and evaled on executing node
+                             (experimental option)
+  * symbol                 - fully qualified symbol, would be resolved to a function on executing node and executed
+
   Optional:
-  task+args+opts - arguments to task and options.
+  task+args+opts - optional tasks, arguments and options. Should begin with additional tasks (if any) after which
+                   args and options can be specified. If multiple tasks are passed all of them would be called together
+                   and return value would be changed to a vector of results.
 
   Options:
-  :args
-  :broadcast
-  :compute
-  :async          - enable async execution if true
-  :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
-  :no-failover    - execute with no failover mode if true
+  :affinity-cache - cache name, or seq of names, for affinity call. Only for single task without broadcast.
+  :affinity-key   - affinity key or partition id when affinity-cache is specified
+  :args           - seqs of arguments to tasks.
+
+                    Should either have a seq for each task, or be skipped if all tasks are no-args.
+                    If only some tasks accept no arguments you can pass for them nils or empty seqs.
+
+                    For example:
+                    (invoke task1 no-arg-task task3 :args arg-seq1 nil args-seq2)
+
+  :async          - if true enables async mode and return type would be an IgniteFuture instance
+  :broadcast      - if true would be called in broadcast mode (on all nodes associated with compute instance)
+  :compute        - compute instance, if not specified *compute* would be used instead
   :name           - name for this task
-  :affinity-cache - cache name(s) for affinity call
-  :affinity-key   - affinity key or partition id
+  :no-failover    - execute with no failover mode if true
   :reduce         - if provided it would be called on the results reducing them into a single value.
                     It should accept 2 arguments (state, x) and should follow the same rules as task.
-  :reduce-init    - initial state of reducer state"
+                    Only for multiple tasks.
+
+  :reduce-init    - initial state of reducer state
+  :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+
+  Return values based on options:
+  * default - task result
+  * broadcast - vector of results
+  * multiple tasks - vector of results
+  * multiple tasks with reducer - reducer result
+  * async - as above, but result would be wrapped in an IgniteFuture instance"
   [task & tasks+args+opts]
-  (try
-    (invoke-map (parse-args task tasks+args+opts))
-    (catch Exception e
-      (throw
-        (IllegalArgumentException.
-          (format "Failed to parse args %s with %s" [task tasks+args+opts] e))))))
+  (invoke* (parse-args task tasks+args+opts)))
 
 (defn distribute
-  "Returns a function which, when called, would be executed in a distributed fashion."
+  "Returns a new function which would call invoke with supplied task and options. If called with bounded *compute* it
+  would be retained as an argument to :compute."
   [task & opts]
   (let [opts-map (parse-args task opts)
         updated-opts (update opts-map :compute #(or % *compute*))]
     (with-meta
-      (fn [& args] (invoke-map (assoc updated-opts :args [args])))
+      (fn [& args] (invoke* (assoc updated-opts :args [args])))
       (merge
         (meta task)
         {::opts-map updated-opts}))))
 
+(defn finvoke
+  "Same as invoke, but will add :async true to options."
+  [task & tasks+args+opts]
+  (apply invoke task (conj (vec tasks+args+opts) :async true)))
+
 (defn fdistribute
+  "Same as distribute, but will add :async true to options."
   [task & opts]
   (apply distribute task (conj (vec opts) :async true)))
 

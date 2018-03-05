@@ -1,8 +1,8 @@
 (ns vermilionsands.ashtree.data-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [vermilionsands.ashtree.data :as data]
-            [vermilionsands.ashtree.fixtures :as fixtures :refer [*ignite-instance*]]
-            [vermilionsands.ashtree.test-helpers :as test-helpers])
+            [vermilionsands.ashtree.util.fixtures :as fixtures :refer [*ignite-instance*]]
+            [vermilionsands.ashtree.util.functions :as functions])
   (:import [java.util.concurrent CountDownLatch]
            [org.apache.ignite Ignition IgniteMessaging IgniteAtomicReference]
            [vermilionsands.ashtree.data IgniteAtom]))
@@ -86,8 +86,8 @@
   (testing "Local validator is not shared between instances"
     (let [a (data/distributed-atom *ignite-instance* "local-validator-test" 0)
           b (data/distributed-atom *ignite-instance* "local-validator-test" 0)]
-      (set-validator! a test-helpers/less-than-10)
-      (is (= test-helpers/less-than-10 (get-validator a)))
+      (set-validator! a functions/less-than-10)
+      (is (= functions/less-than-10 (get-validator a)))
       (is (nil? (get-validator b)))
       (swap! a inc)
       (is (= 1 @a))
@@ -100,7 +100,7 @@
   (testing "Shared validator is shared between instances"
     (let [a (data/distributed-atom *ignite-instance* "shared-validator-test" 0)
           b (data/distributed-atom *ignite-instance* "shared-validator-test" 0)]
-      (data/set-shared-validator! a test-helpers/less-than-10)
+      (data/set-shared-validator! a functions/less-than-10)
       (swap! a inc)
       (is (= 1 @a))
       (is (thrown? IllegalStateException (swap! a + 10)))
@@ -110,7 +110,7 @@
   (testing "Both shared and local validators are called"
     (let [a (data/distributed-atom *ignite-instance* "mixed-validator-test" 0)]
       (set-validator! a even?)
-      (data/set-shared-validator! a test-helpers/less-than-4)
+      (data/set-shared-validator! a functions/less-than-4)
       ;; shared validator kicks in
       (is (thrown? IllegalStateException (swap! a + 10)))
       ;; local validator kicks in
@@ -120,8 +120,8 @@
   (testing "Local watch test without notification test"
     (let [a (data/distributed-atom *ignite-instance* "watch-test" 0)
           b (data/distributed-atom *ignite-instance* "watch-test" 0)
-          [watch-a state-a] (test-helpers/watch-and-store)
-          [watch-b state-b] (test-helpers/watch-and-store)]
+          [watch-a state-a] (functions/watch-and-store)
+          [watch-b state-b] (functions/watch-and-store)]
       (add-watch a :1 watch-a)
       (add-watch b :1 watch-b)
       (is (= {:1 watch-a} (.getWatches a)))
@@ -132,8 +132,8 @@
   (testing "Local watch with notification test"
     (let [a (data/distributed-atom *ignite-instance* "notification-test" 0 {:global-notifications true})
           b (data/distributed-atom *ignite-instance* "notification-test" 0)
-          [watch-a state-a] (test-helpers/watch-and-store)
-          [watch-b state-b] (test-helpers/watch-and-store)]
+          [watch-a state-a] (functions/watch-and-store)
+          [watch-b state-b] (functions/watch-and-store)]
       (add-watch a :local watch-a)
       (add-watch b :local watch-b)
       (swap! a inc)
@@ -144,19 +144,19 @@
 (deftest shared-watch-test
   (let [a (data/distributed-atom *ignite-instance* "shared-watch-test" 0 {:global-notifications true})
         b (data/distributed-atom *ignite-instance* "shared-watch-test" 0)
-        [local-watch local-state] (test-helpers/watch-and-store)]
+        [local-watch local-state] (functions/watch-and-store)]
     (add-watch a :local local-watch)
-    (data/add-shared-watch a :shared test-helpers/store-to-atom-watch)
+    (data/add-shared-watch a :shared functions/store-to-atom-watch)
     (is (some? (:shared (data/get-shared-watches a))))
     (is (some? (:shared (data/get-shared-watches b))))
     (swap! a inc)
     (Thread/sleep 200)
     (is (= [[0 1]] @local-state))
-    (is (= [[0 1] [0 1]] @test-helpers/watch-log))))
+    (is (= [[0 1] [0 1]] @functions/watch-log))))
 
 (deftest skip-identity-test
   (let [a (data/distributed-atom *ignite-instance* "skip-identity-test" 0 {:skip-identity true})
-        [local-watch local-state] (test-helpers/watch-and-store)]
+        [local-watch local-state] (functions/watch-and-store)]
     (add-watch a :local local-watch)
     ;; should be ignored
     (swap! a identity)
