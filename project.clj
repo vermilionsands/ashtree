@@ -8,5 +8,6 @@
                  [org.apache.ignite/ignite-core "2.3.0"]]
   :profiles {:dev  {:source-paths ["dev"]
                     :aot [functions vermilionsands.ashtree.compute]
+                    :dependencies [[org.apache.ignite/ignite-log4j "2.3.0"]]
                     :global-vars {*warn-on-reflection* true}}
              :test {:aot [vermilionsands.ashtree.util.functions]}})
