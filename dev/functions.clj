@@ -1,5 +1,6 @@
 (ns functions
-  (:import [org.apache.ignite Ignite])
+  (:require [vermilionsands.ashtree.ignite :as i])
+  (:import [org.apache.ignite Ignite IgniteCluster])
   (:gen-class))
 
 (defn hello-world [x]
@@ -7,4 +8,4 @@
   x)
 
 (defn get-node-id [^Ignite ignite]
-  (.id (.localNode (.cluster ignite))))
+  (.id (.localNode ^IgniteCluster (i/cluster ignite))))

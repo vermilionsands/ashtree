@@ -39,7 +39,7 @@
     (let [compute (ignite/compute *ignite-instance* :executor "test-pool")]
       (is (= "test-pool" (compute-executor-name compute)))))
   (testing "Instance with cluster group"
-    (let [test-cluster (.forRemotes (.cluster *ignite-instance*))
+    (let [test-cluster (ignite/cluster *ignite-instance* :remote)
           compute (ignite/compute *ignite-instance* :cluster test-cluster)]
       (is (= test-cluster (.clusterGroup compute))))))
 
@@ -51,7 +51,7 @@
       (is (= "echo" @(.submit exec ^Callable (function/eval-fn (function/eval-form (function/sfn [] "echo"))))))
       (is (= "echo" @(.submit exec ^Callable (partial (function/symbol-fn 'identity) "echo"))))))
   (testing "Executor service uses correct cluster group"
-    (let [test-cluster (.forRemotes (.cluster *ignite-instance*))
+    (let [test-cluster (ignite/cluster *ignite-instance* :remote)
           exec ^GridExecutorService (ignite/executor-service *ignite-instance* test-cluster)
           executor-cluster (get-cluster-from-executor exec)]
       (is (= test-cluster executor-cluster)))))

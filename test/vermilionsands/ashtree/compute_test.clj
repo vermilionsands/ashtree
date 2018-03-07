@@ -106,7 +106,7 @@
       (is (= ["echo" "echo"] (invoke echo :args ["echo"] :broadcast :true)))))
   (testing "override with-compute"
     (with-compute (compute)
-      (let [cluster-group (.forRandom (.cluster ^Ignite *ignite-instance*))
+      (let [cluster-group (ignite/cluster *ignite-instance* :remote)
             random-instance (ignite/compute *ignite-instance* :cluster cluster-group)]
         (is (= ["random"] (invoke echo :args ["random"] :broadcast true :compute random-instance)))))))
 

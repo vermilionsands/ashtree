@@ -1,7 +1,8 @@
 (ns vermilionsands.ashtree.util.functions
   "AOT-compiled functions for various tests."
-  (:require [clojure.string :as string])
-  (:import [org.apache.ignite Ignite IgniteCache])
+  (:require [clojure.string :as string]
+            [vermilionsands.ashtree.ignite :as ignite])
+  (:import [org.apache.ignite Ignite IgniteCache IgniteCluster])
   (:gen-class))
 
 ;; for atom tests
@@ -26,12 +27,11 @@
 (defn echo [x] x)
 
 (defn get-node-id [^Ignite ignite]
-  (let [n (.localNode (.cluster ignite))]
-    (.id (.localNode (.cluster ignite)))))
+  (.id (.localNode ^IgniteCluster (ignite/cluster ignite))))
 
 (defn inc-node-state [^Ignite ignite]
   (let [k "counter"
-        local-node-map (.nodeLocalMap (.cluster ignite))]
+        local-node-map (.nodeLocalMap ^IgniteCluster (ignite/cluster ignite))]
     (if-let [counter-atom (.get local-node-map k)]
       (swap! counter-atom inc)
       (do
