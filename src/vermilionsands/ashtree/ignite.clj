@@ -118,3 +118,21 @@
      (if k
        (cluster-group cluster cluster-opts)
        cluster))))
+
+(defn get-local
+  "Get value under key k from local node map on cluster instance. Optionally takes not-found returned if there
+  is no mapping for k."
+  ([^IgniteCluster cluster k]
+   (.get (.nodeLocalMap cluster) k))
+  ([^IgniteCluster cluster k not-found]
+   (.getOrDefault (.nodeLocalMap cluster) k not-found)))
+
+(defn put-local!
+  "Put value v under key k into local node map on cluster instance. Optionally if skip-if-present is true would
+  use putIfAbsent instead of put"
+  ([^IgniteCluster cluster k v]
+   (.put (.nodeLocalMap cluster) k v))
+  ([^IgniteCluster cluster k v skip-if-present]
+   (if skip-if-present
+     (.putIfAbsent (.nodeLocalMap cluster) k v)
+     (put-local! (.nodeLocalMap cluster) k v))))

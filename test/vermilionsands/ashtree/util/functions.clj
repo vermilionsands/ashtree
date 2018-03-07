@@ -31,12 +31,12 @@
 
 (defn inc-node-state [^Ignite ignite]
   (let [k "counter"
-        local-node-map (.nodeLocalMap ^IgniteCluster (ignite/cluster ignite))]
-    (if-let [counter-atom (.get local-node-map k)]
+        c (ignite/cluster ignite)]
+    (if-let [counter-atom (ignite/get-local c k)]
       (swap! counter-atom inc)
       (do
-        (.putIfAbsent local-node-map k (atom 0))
-        (swap! (.get local-node-map k) inc)))))
+        (ignite/put-local! c k (atom 0) true)
+        (swap! (ignite/get-local c k) inc)))))
 
 (defn cache-peek [^IgniteCache cache key]
   (.localPeek cache key nil))
