@@ -249,25 +249,28 @@
   instance - Ignite instance, on which this atom's state would be created
   id       - unique atom identifier
   x        - initial value, if atom does not exist
-  opts     - options map
+  opts-map - options map
 
   Options:
-
   :global-notification  - defaults to nil, if true watch notifications would be propagated to all instances
   :notification-timeout - timeout for notifications, defaults to 0
   :skip-identity        - skip updating value and calling validators/notification logic when new-val equals to old-val"
-  [^Ignite instance id x & [opts]]
-  (let [id (atom-id id)
-        {:keys [global-notifications notification-timeout skip-identity]} opts
-        {:keys [state ctx messaging]}
-        (if-not (find-reference instance id)
-          (or (init-shared-objects instance id x global-notifications notification-timeout)
-              (retrieve-shared-objects instance id))
-          (retrieve-shared-objects instance id))
-        ignite-atom (->IgniteAtom state ctx (atom {}) messaging skip-identity)]
-    (when messaging
-      (add-listener! ignite-atom))
-    ignite-atom))
+  ([^Ignite instance id x]
+   (distributed-atom instance id x {}))
+  ([^Ignite instance id x opts-map]
+   (let [id (atom-id id)
+         {:keys [global-notifications notification-timeout skip-identity]} opts-map
+         {:keys [state ctx messaging]}
+         (if-not (find-reference instance id)
+           (or (init-shared-objects instance id x global-notifications notification-timeout)
+               (retrieve-shared-objects instance id))
+           (retrieve-shared-objects instance id))
+         ignite-atom (->IgniteAtom state ctx (atom {}) messaging skip-identity)]
+     (when messaging
+       (add-listener! ignite-atom))
+     ignite-atom))
+  ([^Ignite instance id x option val & more]
+   (distributed-atom instance id x (assoc (apply hash-map more) option val))))
 
 (defn close!
   "'Soft' closes a distributed atom, removing notficiation listener, but not destroying it's distributed state objects.

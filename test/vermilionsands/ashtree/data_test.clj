@@ -17,8 +17,8 @@
 
 (deftest init-test
   (let [a (data/distributed-atom *ignite-instance* "init-test" 1)
-        b (data/distributed-atom *ignite-instance* "init-test" 2 {:global-notifications true})
-        c (data/distributed-atom *ignite-instance* "atom-with-topic" 2 {:global-notifications true})]
+        b (data/distributed-atom *ignite-instance* "init-test" 2 :global-notifications true)
+        c (data/distributed-atom *ignite-instance* "atom-with-topic" 2 :global-notifications true)]
     (testing "Atom should be initialized with init value"
       (is (= 1 @a)))
     (testing "Atom should not have messaging instance"
@@ -130,7 +130,7 @@
       (is (= [[0 1]] @state-a))
       (is (empty? @state-b))))
   (testing "Local watch with notification test"
-    (let [a (data/distributed-atom *ignite-instance* "notification-test" 0 {:global-notifications true})
+    (let [a (data/distributed-atom *ignite-instance* "notification-test" 0 :global-notifications true)
           b (data/distributed-atom *ignite-instance* "notification-test" 0)
           [watch-a state-a] (functions/watch-and-store)
           [watch-b state-b] (functions/watch-and-store)]
@@ -142,7 +142,7 @@
       (is (= @state-a @state-b)))))
 
 (deftest shared-watch-test
-  (let [a (data/distributed-atom *ignite-instance* "shared-watch-test" 0 {:global-notifications true})
+  (let [a (data/distributed-atom *ignite-instance* "shared-watch-test" 0 :global-notifications true)
         b (data/distributed-atom *ignite-instance* "shared-watch-test" 0)
         [local-watch local-state] (functions/watch-and-store)]
     (add-watch a :local local-watch)
@@ -155,7 +155,7 @@
     (is (= [[0 1] [0 1]] @functions/watch-log))))
 
 (deftest skip-identity-test
-  (let [a (data/distributed-atom *ignite-instance* "skip-identity-test" 0 {:skip-identity true})
+  (let [a (data/distributed-atom *ignite-instance* "skip-identity-test" 0 :skip-identity true)
         [local-watch local-state] (functions/watch-and-store)]
     (add-watch a :local local-watch)
     ;; should be ignored
