@@ -55,3 +55,11 @@
           exec ^GridExecutorService (ignite/executor-service *ignite-instance* test-cluster)
           executor-cluster (get-cluster-from-executor exec)]
       (is (= test-cluster executor-cluster)))))
+
+(deftest local-node-map-test
+  (let [local (ignite/cluster *ignite-instance*)]
+    (ignite/put-local! local :test 1)
+    (is (= 1 (ignite/get-local local :test)))
+    (is (= 1 (ignite/put-local! local :test 2 true)))
+    (ignite/put-local! local :other 3 true)
+    (is (= 3 (ignite/get-local local :other)))))

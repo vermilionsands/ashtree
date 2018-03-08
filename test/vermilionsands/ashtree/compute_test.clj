@@ -226,12 +226,13 @@
                                 :async true)))))))))
 
 (deftest per-node-shared-state-test
-  ;; call 3 times on 2 nodes - 1 would be called 2 times, one 1 time
-  ;; flickers sometimes when other tests fail
-  (with-compute (compute)
-    (is (= [1 1 2]
-           (sort
-             (apply invoke (repeat 3 (partial functions/inc-node-state *ignite-instance*))))))))
+  ;; call on youngest 2 times
+  (with-compute (ignite/compute *ignite-instance* :cluster (ignite/cluster *ignite-instance* :youngest))
+    (invoke functions/inc-node-state :args [*ignite-instance*])
+    (is (= 2 (invoke functions/inc-node-state :args [*ignite-instance*]))))
+  ;; call on oldest once
+  (with-compute (ignite/compute *ignite-instance* :cluster (ignite/cluster *ignite-instance* :oldest))
+    (is (= 1 (invoke functions/inc-node-state :args [*ignite-instance*])))))
 
 (deftest incorrect-configuration-test
   (let [validate-opts #'compute/validate-opts]

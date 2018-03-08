@@ -112,6 +112,8 @@
   "Get a ClusterGroup for a given Ignite instance. If k and optionally further arguments are specified
   cluster-group would be called to get a more specific cluster group.
 
+  Returns IgniteCluster or ClusterGroup if additional arguments are provided.
+
   See cluster-group for possible options."
   ([^Ignite instance & [k :as cluster-opts]]
    (let [cluster (.cluster instance)]
