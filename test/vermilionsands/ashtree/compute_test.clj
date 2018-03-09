@@ -4,7 +4,8 @@
             [vermilionsands.ashtree.function :refer [sfn]]
             [vermilionsands.ashtree.ignite :as ignite]
             [vermilionsands.ashtree.util.fixtures :as fixtures :refer [*ignite-instance*]]
-            [vermilionsands.ashtree.util.functions :as functions :refer [echo]])
+            [vermilionsands.ashtree.util.functions :as functions :refer [echo]]
+            [vermilionsands.ashtree.function :as function])
   (:import [clojure.lang IDeref IPending IBlockingDeref]
            [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException ComputeTaskFuture ComputeTaskSession]
@@ -16,6 +17,8 @@
 
 (defn- compute []
   (ignite/compute *ignite-instance*))
+
+(function/defsfn ^:private long-fn [] (Thread/sleep 1000) :ok)
 
 (deftest callable-test
   (testing "returns the same IgniteCallable"
@@ -80,8 +83,7 @@
 
 (deftest future-test
   (with-compute (compute)
-    (let [f (sfn [] (Thread/sleep 1000) :ok)
-          [^AshtreeFuture fut ^AshtreeFuture another] (into [] (repeatedly 2 (partial invoke f :async true)))]
+    (let [[^AshtreeFuture fut ^AshtreeFuture another] (into [] (repeatedly 2 (partial invoke long-fn :async true)))]
       (is (instance? AshtreeFuture fut))
       (is (instance? ComputeTaskFuture fut))
       (is (instance? IDeref fut))
@@ -161,14 +163,19 @@
   (with-compute (compute)
     (testing "timeout without async"
       (is (thrown? ComputeTaskTimeoutException
-                   (invoke (sfn [] (Thread/sleep 1000) :ok) :timeout 100))))
+                   (invoke long-fn :timeout 100))))
     (testing "timeout with async"
       (is (thrown? ComputeTaskTimeoutException
-                   @(invoke (sfn [] (Thread/sleep 1000) :ok) :timeout 100 :async true))))))
+                   @(invoke long-fn :timeout 100 :async true))))
+    (testing "timeout-val"
+      (is (= :still-ok (invoke long-fn :timeout 100 :timeout-val :still-ok)))
+      (is (= :still-ok @(invoke long-fn :timeout 100 :timeout-val :still-ok :async true))))
+    (testing "nil timeout-val"
+      (is (nil? (invoke long-fn :timeout 100 :timeout-val nil))))))
 
 (deftest task-name-option-test
   (with-compute (compute)
-    (let [result (invoke (sfn [] (Thread/sleep 1000) :ok) :async true :name "test-task")]
+    (let [result (invoke long-fn :async true :name "test-task")]
       (is (= "test-task"
              (.getTaskName (.getTaskSession ^ComputeTaskFuture (.future result)))))
       (.cancel result))))

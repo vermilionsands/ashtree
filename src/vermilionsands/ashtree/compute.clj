@@ -4,7 +4,7 @@
            [java.util Collection]
            [java.util.concurrent TimeUnit]
            [org.apache.ignite IgniteCompute Ignite]
-           [org.apache.ignite.compute ComputeTaskFuture]
+           [org.apache.ignite.compute ComputeTaskFuture ComputeTaskTimeoutException]
            [org.apache.ignite.lang IgniteCallable IgniteFuture IgniteReducer IgniteFutureTimeoutException IgniteClosure])
   (:gen-class))
 
@@ -29,7 +29,13 @@
    (reduce [_]
      @state))
 
-(deftype AshtreeFuture [^ComputeTaskFuture future on-get]
+(defmacro ^:private with-timeout-val [no-error? timeout-val & body]
+  `(try
+     ~@body
+     (catch ComputeTaskTimeoutException e#
+       (if ~no-error? ~timeout-val (throw e#)))))
+
+(deftype AshtreeFuture [^ComputeTaskFuture future on-get no-timeout-error timeout-error-val]
   IDeref
   (deref [this]
     (.get this))
@@ -55,17 +61,19 @@
     (throw (UnsupportedOperationException. "Not implemented yet!")))
 
   (get [_]
-    (if on-get
-      (on-get (.get future))
-      (.get future)))
+    (with-timeout-val no-timeout-error timeout-error-val
+      (if on-get
+        (on-get (.get future))
+        (.get future))))
 
   (get [this timeout]
     (.get this timeout TimeUnit/MILLISECONDS))
 
   (get [_ timeout unit]
-    (if on-get
-      (on-get (.get future timeout unit))
-      (.get future timeout unit)))
+    (with-timeout-val no-timeout-error timeout-error-val
+      (if on-get
+        (on-get (.get future timeout unit))
+        (.get future timeout unit))))
 
   (isCancelled [_]
     (.isCancelled future))
@@ -204,13 +212,16 @@
         aff?      #(.affinityCall ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
         :else     #(.call ^IgniteCompute %1 ^IgniteCallable %2)))))
 
+;; more and more features are creeping in, it need another cleanup
 (defn invoke*
   "Execute a task on a cluster. See invoke for more details.
 
   Accepts an options map which should contain a seq of tasks under :tasks key plus can have any option valid for invoke."
   ([opts-map]
-   (let [{:keys [tasks args compute async broadcast name no-failover reduce timeout]} opts-map
+   (let [{:keys [tasks args compute async broadcast name no-failover reduce timeout timeout-val]} opts-map
+         no-timeout-error (contains? opts-map :timeout-val)
          _ (validate-opts opts-map)
+         ;; move into AshtreeFuture or ctor function
          to-vec? (or broadcast (and (second tasks) (nil? reduce)))
          ignite-callable
          (if (second tasks)
@@ -220,12 +231,14 @@
          (if-let [c (or compute *compute*)]
            (compute-for-task c name timeout no-failover)
            (throw (IllegalArgumentException. "No compute API instance!")))
-         result ((compute-method opts-map) compute ignite-callable)]
+         method (compute-method opts-map)]
      (if async
        (if to-vec?
-         (->AshtreeFuture result vec)
-         (->AshtreeFuture result nil))
-       result)))
+         ;; replace with ctor function
+         (->AshtreeFuture (method compute ignite-callable) vec no-timeout-error timeout-val)
+         (->AshtreeFuture (method compute ignite-callable) nil no-timeout-error timeout-val))
+       (with-timeout-val no-timeout-error timeout-val
+         (method compute ignite-callable)))))
   ([task opts-map]
    (invoke* (update opts-map :tasks #(cons %2 %1) task))))
 
@@ -276,6 +289,7 @@
 
   :reduce-init    - initial state of reducer state
   :timeout        - timeout, after which ComputeTaskTimeoutException would be returned, in milliseconds
+  :timeout-val    - val returned on timeout (can be nil), instead of ComputeTaskTimeoutException
 
   Return values based on options:
   * default - task result
