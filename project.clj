@@ -12,4 +12,5 @@
                     :global-vars {*warn-on-reflection* true}}
              :test {:prep-tasks ^replace ["clean" "compile"]
                     :aot [vermilionsands.ashtree.util.functions]}}
-  :aot [vermilionsands.ashtree.compute])
+  :aot [vermilionsands.ashtree.compute
+        vermilionsands.ashtree.function])

@@ -1,5 +1,5 @@
 (ns user)
 
-(defn dev []
+(defn go []
   (require 'dev)
   (in-ns 'dev))
