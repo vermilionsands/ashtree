@@ -31,3 +31,12 @@
          (finally
            (doseq [i instances]
              (Ignition/stop (.getIgniteInstanceName (.configuration ^Ignite i)) true))))))))
+
+(defn get-private-field [instance ^String field]
+  (let [f (.getDeclaredField (.getClass instance) field)]
+    (try
+      (.setAccessible f true)
+      (.get f instance)
+      (catch Exception _ nil)
+      (finally
+        (.setAccessible f false)))))

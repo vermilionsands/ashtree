@@ -5,13 +5,17 @@
             [vermilionsands.ashtree.ignite :as ignite]
             [vermilionsands.ashtree.util.fixtures :as fixtures :refer [*ignite-instance*]]
             [vermilionsands.ashtree.util.functions :as functions :refer [echo]]
-            [vermilionsands.ashtree.function :as function])
+            [vermilionsands.ashtree.function :as function]
+            [vermilionsands.ashtree.compute :as c])
   (:import [clojure.lang IDeref IPending IBlockingDeref]
            [java.util UUID]
            [org.apache.ignite.compute ComputeTaskTimeoutException ComputeTaskFuture ComputeTaskSession]
            [org.apache.ignite Ignite IgniteCache]
-           [org.apache.ignite.lang IgniteFuture IgniteCallable IgniteReducer IgniteFutureCancelledException]
-           [vermilionsands.ashtree.compute AshtreeFuture]))
+           [org.apache.ignite.lang IgniteFuture IgniteCallable IgniteReducer IgniteFutureCancelledException IgniteFutureTimeoutException]
+           [vermilionsands.ashtree.compute AshtreeFuture]
+           (java.util.concurrent TimeUnit)
+           (org.apache.ignite.internal GridKernalContext)
+           (org.apache.ignite.internal.processors.task GridTaskThreadContextKey)))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
@@ -95,7 +99,10 @@
       (is (instance? ComputeTaskSession (.getTaskSession fut)))
       (.cancel another)
       (is (= :timeouted (deref fut 1 :timeouted)))
+      (is (thrown? IgniteFutureTimeoutException (.get fut 1)))
+      (is (thrown? IgniteFutureTimeoutException (.get fut 1 TimeUnit/MILLISECONDS)))
       (is (= :ok @fut))
+      (is (= :ok (.get fut)))
       (is (.isRealized fut))
       (is (.isDone fut))
       (is (.isCancelled another))
@@ -188,6 +195,21 @@
     (testing "async reduce"
       (is (= "test-echoecho" @(invoke echo echo :args ["echo"] ["echo"] :reduce str :reduce-init "test-" :async true)))
       (is (= "echoecho" @(invoke echo echo :args ["echo"] ["echo"] :reduce str :async true))))))
+
+(deftest failover-option-test
+  (with-compute (compute)
+    (testing "failover is set on compute"
+      (let [f #'c/compute-for-task
+            compute (f c/*compute* nil nil true)
+            ctx (fixtures/get-private-field compute "ctx")]
+        (is (true? (.getThreadContext (.task ^GridKernalContext ctx) GridTaskThreadContextKey/TC_NO_FAILOVER)))))
+    (testing "compute-for-task is called with proper flag"
+      (let [state (atom nil)]
+        (with-redefs [c/compute-for-task (fn [c _ _ failover] (swap! state (fn [_] failover)) c)]
+          (invoke identity :args [true])
+          (is (nil? @state))
+          (invoke identity :args [true] :no-failover true)
+          (is (true? @state)))))))
 
 (deftest affinity-option-test
   (with-compute (compute)

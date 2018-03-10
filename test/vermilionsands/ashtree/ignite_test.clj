@@ -11,20 +11,11 @@
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
-(defn- get-private-field [instance ^String field]
-  (let [f (.getDeclaredField (.getClass instance) field)]
-    (try
-      (.setAccessible f true)
-      (.get f instance)
-      (catch Exception _ nil)
-      (finally
-        (.setAccessible f false)))))
-
 (defn- compute-executor-name [instance]
-  (get-private-field instance "execName"))
+  (fixtures/get-private-field instance "execName"))
 
 (defn- get-cluster-from-executor [instance]
-  (get-private-field instance "prj"))
+  (fixtures/get-private-field instance "prj"))
 
 (deftest compute-instance-test
   (testing "Default instance"
@@ -47,8 +38,7 @@
   (testing "Submitting functions as callables"
     (let [exec ^ExecutorService (ignite/executor-service *ignite-instance*)]
       (is (= "echo" @(.submit exec ^Callable (partial echo "echo"))))
-      ;; ugly, rework this at some point in time, eval-form shouldn't be needed
-      (is (= "echo" @(.submit exec ^Callable (function/eval-fn (function/eval-form (function/sfn [] "echo"))))))
+      (is (= "echo" @(.submit exec ^Callable (function/eval-fn (function/sfn [] "echo")))))
       (is (= "echo" @(.submit exec ^Callable (partial (function/symbol-fn 'identity) "echo"))))))
   (testing "Executor service uses correct cluster group"
     (let [test-cluster (ignite/cluster *ignite-instance* :remote)
