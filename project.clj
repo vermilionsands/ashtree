@@ -1,4 +1,4 @@
-(defproject ashtree "0.1.0"
+(defproject vermilionsands/ashtree "0.1.0"
   :description "Clojure + Apache Ignite"
   :url "https://github.com/vermilionsands/ashtree"
   :license {:name "Eclipse Public License"
