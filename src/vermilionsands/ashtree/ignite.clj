@@ -75,9 +75,7 @@
   :remote - remote nodes
   :servers - nodes in server mode
   :youngest - youngest node (one)"
-  [^ClusterGroup cluster [k & [arg & more :as args]]]
-  (when-not k
-    (throw (IllegalArgumentException. "Cluster group key cannot be null")))
+  [^ClusterGroup cluster & [k & [arg & more :as args]]]
   (let [[cluster-group' args']
         (condp = k
           :attribute    [(.forAttribute cluster arg (first more)) (rest more)]
@@ -90,7 +88,10 @@
                           (.forHost cluster ^ClusterNode arg)
                           (.forHost cluster (first arg) (into-array String (rest arg))))
                          more]
-          :local        [(.forLocal ^IgniteCluster cluster) more]
+          :local        (if (instance? IgniteCluster cluster)
+                          [(.forLocal ^IgniteCluster cluster) more]
+                          (throw (IllegalArgumentException.
+                                   "Local cluster group can be created only from IgniteCluster instance")))
           :nodes        [(.forNodes cluster arg) more]
           :node-id      [(.forNodeIds cluster arg) more]
           :oldest       [(.forOldest cluster) more]
@@ -98,7 +99,7 @@
                           (.forOthers cluster arg)
                           (.forOthers cluster (first arg) (into-array ClusterNode (rest arg))))
                          more]
-          :predicate    [(.forPredicate cluster arg) args]
+          :predicate    [(.forPredicate cluster arg) (rest args)]
           :random       [(.forRandom cluster) args]
           :remote       [(.forRemotes cluster) args]
           :servers      [(.forServers cluster) args]
@@ -118,7 +119,7 @@
   ([^Ignite instance & [k :as cluster-opts]]
    (let [cluster (.cluster instance)]
      (if k
-       (cluster-group cluster cluster-opts)
+       (apply cluster-group cluster cluster-opts)
        cluster))))
 
 (defn get-local
