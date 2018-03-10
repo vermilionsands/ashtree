@@ -51,6 +51,12 @@
         (.await done)
         (is (= 100 @a))))))
 
+(deftest compare-and-set-test
+  (let [a (data/distributed-atom *ignite-instance* "compare-and-swap-test" 0)
+        old-val 0]
+    (is (true?  (compare-and-set! a old-val 1)))
+    (is (false? (compare-and-set! a old-val 2)))))
+
 (deftest reset-test
   (let [a (data/distributed-atom *ignite-instance* "reset-test" 0)]
     (is (= 0 @a))
@@ -139,7 +145,13 @@
       (swap! a inc)
       (Thread/sleep 200) ;; let notification topic do it's job
       (is (= [[0 1]] @state-a))
-      (is (= @state-a @state-b)))))
+      (is (= @state-a @state-b))
+      (testing "Closing and removing listener"
+        (.close b)
+        (swap! a inc)
+        (is (= [[0 1] [1 2]] @state-a))
+        ;; b should not listen for changes any more
+        (is (= [[0 1]] @state-b))))))
 
 (deftest shared-watch-test
   (let [a (data/distributed-atom *ignite-instance* "shared-watch-test" 0 :global-notifications true)
