@@ -2,7 +2,7 @@
 ;;; by Seajure, The Seattle Clojure group and contributors
 (ns vermilionsands.ashtree.function
   (:require [clojure.core.memoize :as memoize])
-  (:import [clojure.lang Compiler$LocalBinding]))
+  (:import [clojure.lang Compiler$LocalBinding AFn]))
 
 (def ^:dynamic *callable-eval*
   "Eval function that would be used by IgniteCallable wrapper for serializable functions.
@@ -89,3 +89,15 @@
             (throw (IllegalArgumentException. (format "Cannot resolve %s to a var!" sym))))
           (apply @f-var args)))
       (meta sym))))
+
+(defn- afn? [task]
+  (instance? AFn task))
+
+(defn task->fn
+
+  [task]
+  (cond
+    (serializable? task) (eval-fn task)
+    (symbol? task)       (symbol-fn task)
+    (afn? task)          task
+    :else (throw (IllegalArgumentException. (format "Unsupported task %s, of type %s" task (type task))))))

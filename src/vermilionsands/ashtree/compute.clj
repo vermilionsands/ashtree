@@ -1,6 +1,6 @@
 (ns vermilionsands.ashtree.compute
   (:require [vermilionsands.ashtree.function :as function])
-  (:import [clojure.lang IDeref IMeta IBlockingDeref IPending AFn]
+  (:import [clojure.lang IDeref IMeta IBlockingDeref IPending]
            [java.util Collection]
            [java.util.concurrent TimeUnit]
            [org.apache.ignite IgniteCompute Ignite]
@@ -96,9 +96,6 @@
     (when (instance? ComputeTaskFuture future)
       (.getTaskSession ^ComputeTaskFuture future))))
 
-(defn- afn? [task]
-  (instance? AFn task))
-
 (defn- closure? [task]
   (instance? IgniteClosure task))
 
@@ -110,11 +107,8 @@
   [task & [arg-coercion]]
   (let [f (if arg-coercion #(comp % arg-coercion) identity)]
     (cond
-      (closure? task)               task
-      (function/serializable? task) (->AshtreeClosure (f (function/eval-fn task)))
-      (symbol? task)                (->AshtreeClosure (f (function/symbol-fn task)))
-      (afn? task)                   (->AshtreeClosure (f task))
-      :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task))))))
+      (closure? task) task
+      :else           (->AshtreeClosure (f (function/task->fn task))))))
 
 (defn chain
   "Takes an Ignite future and tasks and chains them together returning a new future."
@@ -138,11 +132,8 @@
   args - argument vector for task, can be nil, or empty if task is a no-arg function"
   [task & [args]]
   (cond
-    (callable? task)              task
-    (function/serializable? task) (->AshtreeCallable (function/eval-fn task) args)
-    (symbol? task)                (->AshtreeCallable (function/symbol-fn task) args)
-    (afn? task)                   (->AshtreeCallable task args)
-    :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
+    (callable? task) task
+    :else            (->AshtreeCallable (function/task->fn task) args)))
 
 (defn- reducer? [task]
   (instance? IgniteReducer task))
@@ -156,13 +147,9 @@
   Optional:
   init-value - initial value for state, otherwise state would be set to nil"
   [task & [init-value]]
-  (let [state (atom init-value)]
-    (cond
-      (reducer? task)               task
-      (function/serializable? task) (->AshtreeReducer (function/eval-fn (function/eval-form task)) state)
-      (symbol? task)                (->AshtreeReducer (function/symbol-fn task) state)
-      (afn? task)                   (->AshtreeReducer task state)
-      :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteReducer from %s" task))))))
+  (cond
+    (reducer? task) task
+    :else           (->AshtreeReducer (function/task->fn task) (atom init-value))))
 
 (defn- compute-for-task [compute name timeout no-failover]
   (cond-> ^IgniteCompute compute
