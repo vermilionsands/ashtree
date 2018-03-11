@@ -29,13 +29,18 @@
    (reduce [_]
      @state))
 
+(deftype AshtreeClosure [f]
+  IgniteClosure
+  (apply [_ x]
+    (f x)))
+
 (defmacro ^:private with-timeout-val [no-error? timeout-val & body]
   `(try
      ~@body
      (catch ComputeTaskTimeoutException e#
        (if ~no-error? ~timeout-val (throw e#)))))
 
-(deftype AshtreeFuture [^ComputeTaskFuture future on-get no-timeout-error timeout-error-val]
+(deftype AshtreeFuture [^IgniteFuture future on-get no-timeout-error timeout-error-val]
   IDeref
   (deref [this]
     (.get this))
@@ -55,10 +60,10 @@
     (.cancel future))
 
   (chain [_ on-done]
-    (throw (UnsupportedOperationException. "Not implemented yet!")))
+    (AshtreeFuture. (.chain future on-done) nil no-timeout-error timeout-error-val))
 
   (chainAsync [_ on-done exec]
-    (throw (UnsupportedOperationException. "Not implemented yet!")))
+    (AshtreeFuture. (.chainAsync future on-done exec) nil no-timeout-error timeout-error-val))
 
   (get [_]
     (with-timeout-val no-timeout-error timeout-error-val
@@ -88,10 +93,36 @@
     (throw (UnsupportedOperationException. "Not implemented yet!")))
 
   (getTaskSession [_]
-    (.getTaskSession future)))
+    (when (instance? ComputeTaskFuture future)
+      (.getTaskSession ^ComputeTaskFuture future))))
 
 (defn- afn? [task]
   (instance? AFn task))
+
+(defn- closure? [task]
+  (instance? IgniteClosure task))
+
+(defn ^IgniteClosure closure
+  "Create an IgniteClosure instance for a task. See callable for acceptable tasks.
+
+  Args:
+  task - underlying function should accept one arguments"
+  [task & [arg-coercion]]
+  (let [f (if arg-coercion #(comp % arg-coercion) identity)]
+    (cond
+      (closure? task)               task
+      (function/serializable? task) (->AshtreeClosure (f (function/eval-fn task)))
+      (symbol? task)                (->AshtreeClosure (f (function/symbol-fn task)))
+      (afn? task)                   (->AshtreeClosure (f task))
+      :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task))))))
+
+(defn chain
+  "Takes an Ignite future and tasks and chains them together returning a new future."
+  [fut task & tasks]
+  (let [x (.chain ^IgniteFuture fut ^IgniteClosure (closure task #(.get ^IgniteFuture %)))]
+    (if (empty? tasks)
+      x
+      (recur x (first tasks) (rest tasks)))))
 
 (defn- callable? [task]
   (instance? IgniteCallable task))
@@ -108,7 +139,7 @@
   [task & [args]]
   (cond
     (callable? task)              task
-    (function/serializable? task) (->AshtreeCallable (function/eval-fn (function/eval-form task)) args)
+    (function/serializable? task) (->AshtreeCallable (function/eval-fn task) args)
     (symbol? task)                (->AshtreeCallable (function/symbol-fn task) args)
     (afn? task)                   (->AshtreeCallable task args)
     :else (throw (IllegalArgumentException. (format "Don't know how to create IgniteCallable from %s" task)))))
@@ -212,7 +243,7 @@
         aff?      #(.affinityCall ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
         :else     #(.call ^IgniteCompute %1 ^IgniteCallable %2)))))
 
-;; more and more features are creeping in, it need another cleanup
+;; more and more features are creeping in, it needs another cleanup
 (defn invoke*
   "Execute a task on a cluster. See invoke for more details.
 

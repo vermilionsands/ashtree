@@ -9,13 +9,13 @@
             [vermilionsands.ashtree.compute :as c])
   (:import [clojure.lang IDeref IPending IBlockingDeref]
            [java.util UUID]
-           [org.apache.ignite.compute ComputeTaskTimeoutException ComputeTaskFuture ComputeTaskSession]
+           [java.util.concurrent TimeUnit]
            [org.apache.ignite Ignite IgniteCache]
-           [org.apache.ignite.lang IgniteFuture IgniteCallable IgniteReducer IgniteFutureCancelledException IgniteFutureTimeoutException]
-           [vermilionsands.ashtree.compute AshtreeFuture]
-           (java.util.concurrent TimeUnit)
-           (org.apache.ignite.internal GridKernalContext)
-           (org.apache.ignite.internal.processors.task GridTaskThreadContextKey)))
+           [org.apache.ignite.compute ComputeTaskTimeoutException ComputeTaskFuture ComputeTaskSession]
+           [org.apache.ignite.internal GridKernalContext]
+           [org.apache.ignite.internal.processors.task GridTaskThreadContextKey]
+           [org.apache.ignite.lang IgniteFuture IgniteCallable IgniteReducer IgniteFutureCancelledException IgniteFutureTimeoutException IgniteClosure]
+           [vermilionsands.ashtree.compute AshtreeFuture]))
 
 (use-fixtures :once (fixtures/ignite-fixture 2 true))
 
@@ -85,6 +85,33 @@
   (testing "exception for unsupported type"
     (is (thrown? IllegalArgumentException (compute/reducer "should fail")))))
 
+(deftest closure-test
+  (testing "returns the same IgniteClosure"
+    (let [x (reify
+              IgniteClosure
+              (apply [_ x] x))
+          closure (compute/closure x)]
+      (is (instance? IgniteClosure closure))
+      (is (= x closure))
+      (is (= "test" (.apply closure "test")))))
+  (testing "IgniteClosure for function"
+    (let [closure (compute/closure echo)]
+      (is (instance? IgniteClosure closure))
+      (is (= "fn-test" (.apply closure "fn-test")))))
+  (testing "IgniteClosure for symbol"
+    (let [closure (compute/closure 'vermilionsands.ashtree.util.functions/echo)]
+      (is (instance? IgniteClosure closure))
+      (is (= "symbol-test" (.apply closure "symbol-test")))))
+  (testing "IgniteClosure for sfn"
+    (let [closure (compute/closure (sfn [x] x))]
+      (is (instance? IgniteClosure closure))
+      (is (= "sfn-test" (.apply closure "sfn-test")))))
+  (testing "adding coercion"
+    (let [closure (compute/closure clojure.string/reverse str)]
+      (is (= "321" (.apply closure 123)))))
+  (testing "exception for unsupported type"
+    (is (thrown? IllegalArgumentException (compute/closure "should fail")))))
+
 (deftest future-test
   (with-compute (compute)
     (let [[^AshtreeFuture fut ^AshtreeFuture another] (into [] (repeatedly 2 (partial invoke long-fn :async true)))]
@@ -107,6 +134,20 @@
       (is (.isDone fut))
       (is (.isCancelled another))
       (is (thrown? IgniteFutureCancelledException @another)))))
+
+(deftest future-chaining-test
+  (with-compute (compute)
+    (testing "chaining single function"
+      (let [^AshtreeFuture fut (invoke echo :args ["Hello"] :async true)
+            x (c/chain fut clojure.string/lower-case)
+            y (c/chain x clojure.string/reverse)]
+        (is (instance? AshtreeFuture x))
+        (is (instance? AshtreeFuture y))
+        (is (= "hello" @x))
+        (is (= "olleh" @y))))
+    (testing "chaining multiple functions"
+      (let [^AshtreeFuture fut (invoke echo :args ["Hello"] :async true)]
+        (is (= "olleh" @(c/chain fut clojure.string/lower-case clojure.string/reverse)))))))
 
 (deftest with-compute-test
   (testing "use with-compute instance"
