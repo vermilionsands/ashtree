@@ -247,12 +247,10 @@
 
 (defn- call-async [compute method  callable opts-map]
   (let [{:keys [tasks broadcast reduce timeout-val]} opts-map
-        no-timeout-error (contains? opts-map :timeout-val)]
-    (if (or broadcast (and (second tasks) (nil? reduce)))
-      (->AshtreeFuture (method compute callable) vec no-timeout-error timeout-val)
-      (->AshtreeFuture (method compute callable) nil no-timeout-error timeout-val))))
+        no-timeout-error (contains? opts-map :timeout-val)
+        coerce (if (or broadcast (and (second tasks) (nil? reduce))) vec nil)]
+    (->AshtreeFuture (method compute callable) coerce no-timeout-error timeout-val)))
 
-;; more and more features are creeping in, it needs another cleanup
 (defn invoke*
   "Execute a task on a cluster. See invoke for more details.
 
