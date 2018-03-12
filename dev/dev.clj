@@ -12,6 +12,9 @@
            [org.apache.ignite.spi.discovery.tcp.ipfinder.multicast TcpDiscoveryMulticastIpFinder]
            [org.apache.ignite.spi.discovery.tcp.ipfinder.vm TcpDiscoveryVmIpFinder]))
 
+(defn reload []
+  (require 'dev :reload-all))
+
 (defonce ^:dynamic ^Ignite *ignite* nil)
 (defonce ^:dynamic ^IgniteCompute *compute* nil)
 
@@ -61,3 +64,26 @@
   (alter-var-root #'*ignite* (constantly nil))
   (alter-var-root #'*compute* (constantly nil))
   (Ignition/stopAll true))
+
+(f/defsfn eval-in-ns [ns-sym form]
+  (binding [*ns* (the-ns ns-sym)]
+    (eval form)))
+
+(defn broadcast-eval
+  ([form]
+   (broadcast-eval *ns* form))
+  ([ns-sym form]
+   (c/invoke eval-in-ns :args [ns-sym form] :broadcast true)))
+
+(defmacro deval
+  ([ns-sym form]
+   `(broadcast-eval '~ns-sym '~form))
+  ([ns-sym form1 form2 & forms]
+   (let [do-form (cond 'do (cond form1 (cons form2 forms)))]
+     `(broadcast-eval '~ns-sym '~do-form))))
+
+(defmacro ddefn [fn-sym & defn-args]
+  (let [fn-name   (symbol (name fn-sym))
+        fn-ns     (symbol (namespace fn-sym))
+        defn-form (cons 'clojure.core/defn (cons fn-name defn-args))]
+    `(broadcast-eval '~fn-ns '~defn-form)))
