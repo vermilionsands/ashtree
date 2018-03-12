@@ -108,7 +108,7 @@
   (let [f (if arg-coercion #(comp % arg-coercion) identity)]
     (cond
       (closure? task) task
-      :else           (->AshtreeClosure (f (function/task->fn task))))))
+      :else           (->AshtreeClosure (f (function/x->fn task))))))
 
 (defn chain
   "Takes an Ignite future and tasks and chains them together returning a new future."
@@ -133,7 +133,7 @@
   [task & [args]]
   (cond
     (callable? task) task
-    :else            (->AshtreeCallable (function/task->fn task) args)))
+    :else            (->AshtreeCallable (function/x->fn task) args)))
 
 (defn- reducer? [task]
   (instance? IgniteReducer task))
@@ -149,9 +149,9 @@
   [task & [init-value]]
   (cond
     (reducer? task) task
-    :else           (->AshtreeReducer (function/task->fn task) (atom init-value))))
+    :else           (->AshtreeReducer (function/x->fn task) (atom init-value))))
 
-(defn- compute-for-task [compute name timeout no-failover]
+(defn- compute-instance [compute name timeout no-failover]
   (cond-> ^IgniteCompute compute
     timeout     (.withTimeout timeout)
     no-failover (.withNoFailover)
@@ -163,6 +163,7 @@
   (letfn [(take-value [k x xs]
             (if (#{:args :tasks} k)
               (let [[l r] (split-with (complement keyword?) xs)]
+                [(vec (cons x l)) r]
                 [(vec (cons x l)) r])
               [x xs]))]
     (try
@@ -183,6 +184,9 @@
         task-count (count tasks)
         arg-count (count args)]
     (cond
+      (not (or (:compute opts-map) *compute*))
+      (illegal "No compute API instance!")
+
       (empty? tasks)
       (illegal "No tasks!")
 
@@ -230,33 +234,36 @@
         aff?      #(.affinityCall ^IgniteCompute %1 ^String affinity-cache ^Object affinity-key ^IgniteCallable %2)
         :else     #(.call ^IgniteCompute %1 ^IgniteCallable %2)))))
 
+(defn- compute-callable [tasks args]
+  (if (second tasks)
+    (mapv callable tasks (or args (repeat nil)))
+    (callable (first tasks) (first args))))
+
+(defn- call-sync [compute method callable opts-map]
+  (let [{:keys [timeout-val]} opts-map
+        no-timeout-error (contains? opts-map :timeout-val)]
+    (with-timeout-val no-timeout-error timeout-val
+      (method compute callable))))
+
+(defn- call-async [compute method  callable opts-map]
+  (let [{:keys [tasks broadcast reduce timeout-val]} opts-map
+        no-timeout-error (contains? opts-map :timeout-val)]
+    (if (or broadcast (and (second tasks) (nil? reduce)))
+      (->AshtreeFuture (method compute callable) vec no-timeout-error timeout-val)
+      (->AshtreeFuture (method compute callable) nil no-timeout-error timeout-val))))
+
 ;; more and more features are creeping in, it needs another cleanup
 (defn invoke*
   "Execute a task on a cluster. See invoke for more details.
 
   Accepts an options map which should contain a seq of tasks under :tasks key plus can have any option valid for invoke."
   ([opts-map]
-   (let [{:keys [tasks args compute async broadcast name no-failover reduce timeout timeout-val]} opts-map
-         no-timeout-error (contains? opts-map :timeout-val)
-         _ (validate-opts opts-map)
-         ;; move into AshtreeFuture or ctor function
-         to-vec? (or broadcast (and (second tasks) (nil? reduce)))
-         ignite-callable
-         (if (second tasks)
-           (mapv callable tasks (or args (repeat nil)))
-           (callable (first tasks) (first args)))
-         compute
-         (if-let [c (or compute *compute*)]
-           (compute-for-task c name timeout no-failover)
-           (throw (IllegalArgumentException. "No compute API instance!")))
-         method (compute-method opts-map)]
-     (if async
-       (if to-vec?
-         ;; replace with ctor function
-         (->AshtreeFuture (method compute ignite-callable) vec no-timeout-error timeout-val)
-         (->AshtreeFuture (method compute ignite-callable) nil no-timeout-error timeout-val))
-       (with-timeout-val no-timeout-error timeout-val
-         (method compute ignite-callable)))))
+   (validate-opts opts-map)
+   (let [{:keys [tasks args compute async name no-failover timeout]} opts-map
+         callable (compute-callable tasks args)
+         compute  (compute-instance (or compute *compute*) name timeout no-failover)
+         method   (compute-method opts-map)]
+     ((if async call-async call-sync) compute method callable opts-map)))
   ([task opts-map]
    (invoke* (update opts-map :tasks #(cons %2 %1) task))))
 

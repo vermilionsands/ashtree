@@ -240,13 +240,13 @@
 (deftest failover-option-test
   (with-compute (compute)
     (testing "failover is set on compute"
-      (let [f #'c/compute-for-task
+      (let [f #'c/compute-instance
             compute (f c/*compute* nil nil true)
             ctx (fixtures/get-private-field compute "ctx")]
         (is (true? (.getThreadContext (.task ^GridKernalContext ctx) GridTaskThreadContextKey/TC_NO_FAILOVER)))))
     (testing "compute-for-task is called with proper flag"
       (let [state (atom nil)]
-        (with-redefs [c/compute-for-task (fn [c _ _ failover] (swap! state (fn [_] failover)) c)]
+        (with-redefs [c/compute-instance (fn [c _ _ failover] (swap! state (fn [_] failover)) c)]
           (invoke identity :args [true])
           (is (nil? @state))
           (invoke identity :args [true] :no-failover true)

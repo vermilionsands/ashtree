@@ -93,11 +93,11 @@
 (defn- afn? [task]
   (instance? AFn task))
 
-(defn task->fn
-
-  [task]
+(defn x->fn
+  "Converts x to a function"
+  [x]
   (cond
-    (serializable? task) (eval-fn task)
-    (symbol? task)       (symbol-fn task)
-    (afn? task)          task
-    :else (throw (IllegalArgumentException. (format "Unsupported task %s, of type %s" task (type task))))))
+    (serializable? x) (eval-fn x)
+    (symbol? x)       (symbol-fn x)
+    (afn? x)          x
+    :else (throw (IllegalArgumentException. (format "Unsupported argument %s, of type %s" x (type x))))))
