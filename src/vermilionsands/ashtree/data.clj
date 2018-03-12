@@ -49,16 +49,16 @@
                      skip-identity]
   IAtom
   (swap [this f]
-    (value-swap* this f nil))
+    (value-swap* this f))
 
   (swap [this f x]
-    (value-swap* this f [x]))
+    (value-swap* this f x))
 
   (swap [this f x y]
-    (value-swap* this f [x y]))
+    (value-swap* this f x y))
 
   (swap [this f x y args]
-    (value-swap* this f [x y args]))
+    (apply value-swap* this f x y args))
 
   (compareAndSet [this old-val new-val]
     (if (and (= old-val new-val) skip-identity)
@@ -175,12 +175,9 @@
         (when f
           (f k ignite-atom old-val new-val))))))
 
-(defn- value-swap* [^IgniteAtom ignite-atom f args]
-  (let [[x y rest] args
-        old-val (deref ignite-atom)
-        new-val (if rest
-                  (apply f old-val x y rest)
-                  (apply f old-val args))]
+(defn- value-swap* [^IgniteAtom ignite-atom f & args]
+  (let [old-val (deref ignite-atom)
+        new-val (apply f old-val args)]
     (if (and (= old-val new-val) (.-skip_identity ignite-atom))
       old-val
       (do
